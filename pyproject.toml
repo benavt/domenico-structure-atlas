@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domenico-structure-atlas"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Frozen RBP, 5NTase and SERCA structure analysis and saved-result publication"
+dependencies = [
+  "structure-clustering @ git+https://github.com/benavt/Structure_Clustering.git@258ce0df358a3dd0fedce334661ba5ce234be8a2",
+]
+
+[project.optional-dependencies]
+analysis = ["structure-clustering[desktop]"]
+
+[tool.setuptools]
+packages = []

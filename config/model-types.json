@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "display_name": "Domenico AIS methods",
+  "rules": [
+    {
+      "key": "afcluster",
+      "name": "AF-Cluster",
+      "enabled": true,
+      "priority": 1,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__afcluster__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "AF-Cluster",
+        "model_version": null
+      },
+      "color": "#4477AA"
+    },
+    {
+      "key": "afsample2",
+      "name": "AFSample2",
+      "enabled": true,
+      "priority": 2,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__afsample2__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "AFSample2",
+        "model_version": null
+      },
+      "color": "#EE6677"
+    },
+    {
+      "key": "afsample3",
+      "name": "AFSample3",
+      "enabled": true,
+      "priority": 3,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__afsample3__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "AFSample3",
+        "model_version": null
+      },
+      "color": "#228833"
+    },
+    {
+      "key": "alphaflow-md",
+      "name": "AlphaFlow-MD",
+      "enabled": true,
+      "priority": 4,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__alphaflow-md__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "AlphaFlow-MD",
+        "model_version": null
+      },
+      "color": "#CCBB44"
+    },
+    {
+      "key": "alphaflow-pdb",
+      "name": "AlphaFlow-PDB",
+      "enabled": true,
+      "priority": 5,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__alphaflow-pdb__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "AlphaFlow-PDB",
+        "model_version": null
+      },
+      "color": "#66CCEE"
+    },
+    {
+      "key": "bioemu",
+      "name": "BioEMU",
+      "enabled": true,
+      "priority": 6,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__bioemu__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "BioEMU",
+        "model_version": null
+      },
+      "color": "#AA3377"
+    },
+    {
+      "key": "bioemu2",
+      "name": "BioEMU2",
+      "enabled": true,
+      "priority": 7,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__bioemu2__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "BioEMU2",
+        "model_version": null
+      },
+      "color": "#BBBBBB"
+    },
+    {
+      "key": "boltz2",
+      "name": "Boltz2",
+      "enabled": true,
+      "priority": 8,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__boltz2__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "Boltz2",
+        "model_version": null
+      },
+      "color": "#332288"
+    },
+    {
+      "key": "esmflow-pdb",
+      "name": "ESMFlow-PDB",
+      "enabled": true,
+      "priority": 9,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__esmflow-pdb__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "ESMFlow-PDB",
+        "model_version": null
+      },
+      "color": "#DDCC77"
+    },
+    {
+      "key": "opendde",
+      "name": "OpenDDE",
+      "enabled": true,
+      "priority": 10,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__opendde__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "OpenDDE",
+        "model_version": null
+      },
+      "color": "#117733"
+    },
+    {
+      "key": "speachaf",
+      "name": "SPEACH_AF",
+      "enabled": true,
+      "priority": 11,
+      "match": {
+        "fields": [
+          "model",
+          "source_path"
+        ],
+        "contains_any": [
+          "__speachaf__"
+        ],
+        "contains_all": [],
+        "contains_none": [],
+        "regex_any": [],
+        "case_insensitive": false
+      },
+      "assign": {
+        "model_type": "SPEACH_AF",
+        "model_version": null
+      },
+      "color": "#882255"
+    }
+  ]
+}

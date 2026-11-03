@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "settings": {
+    "enabled": true,
+    "minimum_models": 3,
+    "minimum_segment_residues": 3,
+    "maximum_terminal_fraction": 0.4,
+    "minimum_distance_sd_angstrom": 2.0,
+    "minimum_high_variance_fraction": 0.6,
+    "robust_mad_multiplier": 3.0,
+    "neighbor_exclusion": 3,
+    "rigid_segment_sd_angstrom": 1.0,
+    "minimum_remaining_residues": 10,
+    "comparison_scope": "all_residues",
+    "preserve_rigid_segments": true,
+    "exclude_unassigned_terminals": false,
+    "minimum_chain_residues_for_trimming": 16,
+    "maximum_excluded_fraction": 0.25
+  }
+}

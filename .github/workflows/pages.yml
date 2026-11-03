@@ -1,0 +1,54 @@
+name: Deploy reviewed saved site
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Reviewed release containing site.tar.gz
+        required: true
+        type: string
+      bundle_sha256:
+        description: Exact SHA-256 of the reviewed static site.tar.gz
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download the selected static bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: gh release download "$RELEASE_TAG" --repo "$GH_REPO" --pattern site.tar.gz --dir local
+      - name: Verify and unpack the saved export
+        env:
+          REVIEWED_SHA: ${{ inputs.bundle_sha256 }}
+        run: python scripts/deploy_bundle.py local/site.tar.gz --sha256 "$REVIEWED_SHA" --output site/build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/build
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

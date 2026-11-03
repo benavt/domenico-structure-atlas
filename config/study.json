@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "project": "domenico-structure-atlas",
+  "library_commit": "258ce0df358a3dd0fedce334661ba5ce234be8a2",
+  "shared_workflow_commit": "fc0e961f1581e93c8dd854ac890f9d300d00f6d5",
+  "snapshot": {
+    "manifest_sha256": "e254f009f92f6ce5e9bfd93dca3a970b6d3bf37cd31f050db53fb0266e6cc000",
+    "acceptance_sha256": "e64a5825019032fb4a352d97ce836ab13af87a0510f25ab4aef2f25560bbdcd1",
+    "source_cutoff": "2026-11-03T16:02:08.327871+00:00",
+    "models": 26998,
+    "status": "accepted_scored_existing_snapshot"
+  },
+  "targets": {
+    "RBP_P02925": {
+      "title": "RBP",
+      "sequence": "KDTIALVVSTLNNPFFVSLKDGAQKEADKLGYNLVVLDSQNNPAKELANVQDLTVRGTKILLINPTDSDAVGNAVKMANQANIPVITLDRQATKGEVVSHIASDNVLGGKIAGDYIAKKAGEGAKVIELQGIAGTSAARERGEGFQQAVAAHKFNVLASQPADFDRIKGLNVMQNLLTAHPDVQAVFAQNDEMALGALRALQTAGKSDVMVVGFDGTPDGEKAVNDGKLAATIAQLPDQIGAKGVETADKVLKGEKVQAKYPVDLKLVVKQ",
+      "sequence_sha256": "31f2858fcd3b4cfc3cc4a6ef39ae82f3499a08eaf8a236b05887402083405bc4",
+      "residues": 271,
+      "models": 10926,
+      "methods": {
+        "afcluster": 1000,
+        "afsample2": 1000,
+        "afsample3": 1000,
+        "alphaflow-md": 1000,
+        "alphaflow-pdb": 1000,
+        "bioemu": 1000,
+        "bioemu2": 926,
+        "boltz2": 1000,
+        "esmflow-pdb": 1000,
+        "opendde": 1000,
+        "speachaf": 1000
+      },
+      "complete_eleven_method_panel": false,
+      "coordinate_bytes": 1793538524
+    },
+    "5NTase_P07024": {
+      "title": "5NTase",
+      "sequence": "YEQDKTYKITVLHTNDHHGHFWRNEYGEYGLAAQKTLVDGIRKEVAAEGGSVLLLSGGDINTGVPESDLQDAEPDFRGMNLVGYDAMAIGNHEFDNPLTVLRQQEKWAKFPLLSANIYQKSTGERLFKPWALFKRQDLKIAVIGLTTDDTAKIGNPEYFTDIEFRKPADEAKLVIQELQQTEKPDIIIAATHMGHYDNGEHGSNAPGDVEMARALPAGSLAMIVGGHSQDPVCMAAENKKQVDYVPGTPCKPDQQNGIWIVQAHEWGKYVGRADFEFRNGEMKMVNYQLIPVNLKKKVTWEDGKSERVLYTPEIAENQQMISLLSPFQNKGKAQLEVKIGETNGRLEGDRDKVRFVQTNMGRLILAAQMDRTGADFAVMSGGGIRDSIEAGDISYKNVLKVQPFGNVVVYADMTGKEVIDYLTAVAQMKPDSGAYPQFANVSFVAKDGKLNDLKIKGEPVDPAKTYRMATLNFNATGGDGYPRLDNKPGYVNTGFIDAEVLKAYIQKSSPLDVSVYEPKGEVS",
+      "sequence_sha256": "0b64f9675fee8f87d2bd10f4c65cbbf53799794ed11c9604112fb6b32e9a2e02",
+      "residues": 523,
+      "models": 11000,
+      "methods": {
+        "afcluster": 1000,
+        "afsample2": 1000,
+        "afsample3": 1000,
+        "alphaflow-md": 1000,
+        "alphaflow-pdb": 1000,
+        "bioemu": 1000,
+        "bioemu2": 1000,
+        "boltz2": 1000,
+        "esmflow-pdb": 1000,
+        "opendde": 1000,
+        "speachaf": 1000
+      },
+      "complete_eleven_method_panel": true,
+      "coordinate_bytes": 3655482947
+    },
+    "SERCA_P04191": {
+      "title": "SERCA",
+      "sequence": "MEAAHSKSTEECLAYFGVSETTGLTPDQVKRHLEKYGHNELPAEEGKSLWELVIEQFEDLLVRILLLAACISFVLAWFEEGEETITAFVEPFVILLILIANAIVGVWQERNAENAIEALKEYEPEMGKVYRADRKSVQRIKARDIVPGDIVEVAVGDKVPADIRILSIKSTTLRVDQSILTGESVSVIKHTEPVPDPRAVNQDKKNMLFSGTNIAAGKALGIVATTGVSTEIGKIRDQMAATEQDKTPLQQKLDEFGEQLSKVISLICVAVWLINIGHFNDPVHGGSWIRGAIYYFKIAVALAVAAIPEGLPAVITTCLALGTRRMAKKNAIVRSLPSVETLGCTSVICSDKTGTLTTNQMSVCKMFIIDKVDGDFCSLNEFSITGSTYAPEGEVLKNDKPIRSGQFDGLVELATICALCNDSSLDFNETKGVYEKVGEATETALTTLVEKMNVFNTEVRNLSKVERANACNSVIRQLMKKEFTLEFSRDRKSMSVYCSPAKSSRAAVGNKMFVKGAPEGVIDRCNYVRVGTTRVPMTGPVKEKILSVIKEWGTGRDTLRCLALATRDTPPKREEMVLDDSSRFMEYETDLTFVGVVGMLDPPRKEVMGSIQLCRDAGIRVIMITGDNKGTAIAICRRIGIFGENEEVADRAYTGREFDDLPLAEQREACRRACCFARVEPSHKSKIVEYLQSYDEITAMTGDGVNDAPALKKAEIGIAMGSGTAVAKTASEMVLADDNFSTIVAAVEEGRAIYNNMKQFIRYLISSNVGEVVCIFLTAALGLPEALIPVQLLWVNLVTDGLPATALGFNPPDLDIMDRPPRSPKEPLISGWLFFRYMAIGGYVGAATVGAAAWWFMYAEDGPGVTYHQLTHFMQCTEDHPHFEGLDCEIFEAPEPMTMALSVLVTIEMCNALNSLSENQSLMRMPPWVNIWLLGSICLSMSLHFLILYVDPLPMIFKLKALDLTQWLMVLKISLPVIGLDEILKFIARNYLE",
+      "sequence_sha256": "826fd1971825b5789e6bf4eade9c172d6f5d15f499cc5b243637457bd5496020",
+      "residues": 993,
+      "models": 5072,
+      "methods": {
+        "afcluster": 974,
+        "afsample2": 1000,
+        "afsample3": 1000,
+        "bioemu": 176,
+        "boltz2": 5,
+        "esmflow-pdb": 922,
+        "opendde": 995
+      },
+      "complete_eleven_method_panel": false,
+      "coordinate_bytes": 3317964609
+    }
+  },
+  "selection": {
+    "policy": "standard_confidence_among_genuinely_scored_models",
+    "unscored_cluster_policy": "structural_medoid",
+    "models_per_cluster": 5
+  },
+  "energy": {
+    "checkpoint_sha256": "2d3045666c89766f94bf8a6265d64b7086cea9540c8dd5f51230a9ed806abb91",
+    "config_sha256": "de1d1119ff1b793d14a1e235eeeb4f5f74dedbac052a08b937f99b4cbb8584ca",
+    "display_t": 0.1,
+    "direction": "lower_is_better",
+    "scope": "full_saved_construct",
+    "units": "learned_arbitrary_units",
+    "is_confidence": false
+  },
+  "terminal_policy": {
+    "config": "config/terminal_variance.json",
+    "reason": "Conservative terminal screening protects internally rigid moving domains; inspect diagnostics before clustering.",
+    "biological_disorder_claim": false
+  },
+  "report": {
+    "complete_report": true,
+    "all_clusters": true,
+    "camera_approval_required": true
+  }
+}
