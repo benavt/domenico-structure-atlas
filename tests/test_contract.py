@@ -6,14 +6,22 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from snapshot import sha256, verify
 from deploy_bundle import unpack
+from workflow import validate_construct
 
 
 class ContractTests(unittest.TestCase):
+    def test_construct_rejects_missing_residues_and_extra_chains(self):
+        sequence = lambda *s: SimpleNamespace(subsequences=[SimpleNamespace(sequence=v) for v in s])
+        validate_construct(sequence('ACDE'),4,'ACDE')
+        for model,n in [(sequence('ACD'),3),(sequence('ACDE','ACDE'),8),(sequence('ACDE'),3)]:
+            with self.assertRaisesRegex(ValueError,'construct'):validate_construct(model,n,'ACDE')
+
     def fixture(self, root, mutate=None):
         rows = [dict(target='T', method='m', model_id=f'T__m__{i}', path=f'/{i}.pdb',
                      sha256='a'*64, energy_t010=float(i), **{f'energy_t{j:02d}':float(i) for j in range(16)})
