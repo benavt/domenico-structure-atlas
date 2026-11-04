@@ -114,15 +114,37 @@ def main():
         if sha256(proof_path) != plan['verified_validation_receipt_sha256']:
             raise ValueError('Verified native validation proof changed')
         proof = json.loads(proof_path.read_text())
-        if proof['status'] != 'validated' or proof['library_commit'] != plan['sources']['library']['commit']:
+        if proof['status'] != 'validated' or proof['library_commit'] != plan.get('validated_engine_commit', plan['sources']['library']['commit']):
             raise ValueError('Native validation belongs to different analysis code')
         for path, digest in proof['frozen_files'].items():
             if sha256(path) != digest:
                 raise ValueError('Saved native validation artifact changed')
+        if plan.get('engine_compatibility'):
+            evidence = plan['engine_compatibility']
+            if sha256(evidence['path']) != evidence['sha256']:
+                raise ValueError('Validated engine compatibility receipt changed')
+            compatibility = json.loads(Path(evidence['path']).read_text())
+            if (compatibility['validated_commit'] != proof['library_commit']
+                    or compatibility['candidate_commit'] != plan['sources']['library']['commit']):
+                raise ValueError('Validated engine compatibility binds different revisions')
+            library = Path(plan['sources']['library']['checkout'])
+            for name, digest in compatibility['files_sha256'].items():
+                if sha256(library/name) != digest:
+                    raise ValueError('Validated numerical engine changed: '+name)
         print('Reusing explicit hash-verified native validation; no fixture projection fits.', flush=True)
     else:
         validate(plan, root)
-    confidence = collect_confidence(plan, root)
+    if plan.get('verified_confidence'):
+        entry = plan['verified_confidence']; confidence = Path(entry['path'])
+        if sha256(confidence) != entry['sha256']:
+            raise ValueError('Previously verified native confidence changed')
+        data = json.loads(confidence.read_text())
+        if (data['status'] != 'validated' or data['catalog_sha256'] != plan['native_confidence']['catalog_sha256']
+                or data['source_manifest_sha256'] != sha256(plan['native_manifest'])):
+            raise ValueError('Saved native confidence belongs to another accepted snapshot')
+        print('Reusing explicit hash-verified native confidence; no remote reads or score calculations.', flush=True)
+    else:
+        confidence = collect_confidence(plan, root)
     import confidence as native_confidence
     from workflow import load_intake
     completion = {'status': 'running', 'targets': {}, 'native_confidence_sha256': sha256(confidence),

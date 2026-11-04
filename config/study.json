@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project": "domenico-structure-atlas",
-  "library_commit": "c7f5bc42e015d5e7faa9e6c85bd830cb88ede570",
+  "library_commit": "fe94ba765fd7a9f9894a5e5ba11a57f582a39365",
   "shared_workflow_commit": "fc0e961f1581e93c8dd854ac890f9d300d00f6d5",
   "snapshot": {
     "manifest_sha256": "e254f009f92f6ce5e9bfd93dca3a970b6d3bf37cd31f050db53fb0266e6cc000",
