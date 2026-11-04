@@ -20,6 +20,8 @@ def checked_json(path, digest):
 
 def projections(manifest, expected):
     import numpy as np
+    if not all(method in manifest.get('clustering', {}) for method in ['pca', 'umap', 'tsne']):
+        raise ValueError('All three real saved projections are required before publication')
     names, result = None, {}
     for method in ['pca', 'umap', 'tsne']:
         with np.load(manifest['clustering'][method]['embeddings'], allow_pickle=False) as saved:

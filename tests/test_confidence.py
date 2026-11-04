@@ -19,13 +19,13 @@ def score_entry(method, kind, payload):
     return confidence.extract_model(row, lambda _: payload)
 
 
-def test_af2_monomer_ranking_is_plddt_and_not_multimer_ranking():
+def check_af2_monomer_ranking_is_plddt_and_not_multimer_ranking():
     result = score_entry('afsample2', 'af2_monomer_scores', {'ranking_confidence': 82.5, 'ptm': .7})
     assert result['mean_plddt'] == 82.5 and result['ptm'] == .7
     assert 'iptm' not in result and 'ranking_confidence' not in result
 
 
-def test_boltz_rescaling_and_opendde_omit_monomer_placeholder_iptm():
+def check_boltz_rescaling_and_opendde_omit_monomer_placeholder_iptm():
     result = score_entry('boltz2', 'boltz2_native_scores', {'complex_plddt': .92, 'ptm': .8, 'iptm': 0})
     assert result['mean_plddt'] == 92
     assert 'iptm' not in result
@@ -33,13 +33,13 @@ def test_boltz_rescaling_and_opendde_omit_monomer_placeholder_iptm():
     assert result['mean_plddt'] == 91 and 'iptm' not in result
 
 
-def test_unscored_models_remain_unscored():
+def check_unscored_models_remain_unscored():
     for method in ('bioemu', 'bioemu2'):
         result = confidence.extract_model(entry(method, 'unscored_no_native_confidence'), lambda _: unittest.TestCase().fail('No score read'))
         assert result['mean_plddt'] is None and result['ptm'] is None and not result['eligible']
 
 
-def test_nested_scores_require_exact_native_coordinate_binding():
+def check_nested_scores_require_exact_native_coordinate_binding():
     payload = dict(status='validated', method='afcluster', pdb='/native/model.pdb', pdb_sha256='a'*64,
                    scores={'mean_plddt': 90, 'ptm': .8})
     assert score_entry('afcluster', 'native_nested_scores', payload)['mean_plddt'] == 90
@@ -48,7 +48,7 @@ def test_nested_scores_require_exact_native_coordinate_binding():
         score_entry('afcluster', 'native_nested_scores', payload)
 
 
-def test_af3_averages_native_atoms_and_requires_single_chain():
+def check_af3_averages_native_atoms_and_requires_single_chain():
     row = entry('afsample3', 'af3_summary_and_atom_confidence')
     row['files'] = [dict(role=role, bytes=1, sha256='b'*64) for role in ['native_summary', 'native_atom_confidence']]
     data = dict(native_summary={'chain_ptm': [.8], 'ptm': .8, 'iptm': None}, native_atom_confidence={'atom_plddts': [80, 90, 100]})
@@ -59,17 +59,17 @@ def test_af3_averages_native_atoms_and_requires_single_chain():
         confidence.extract_model(row, lambda f: data[f['role']])
 
 
-def test_invalid_confidence_never_becomes_fabricated_score(value):
+def check_invalid_confidence_never_becomes_fabricated_score(value):
     with unittest.TestCase().assertRaises(ValueError):
         score_entry('afsample2', 'af2_monomer_scores', {'ranking_confidence': value, 'ptm': .7})
 
 
 class ConfidenceTests(unittest.TestCase):
-    def test_af2(self): test_af2_monomer_ranking_is_plddt_and_not_multimer_ranking()
-    def test_boltz_opendde(self): test_boltz_rescaling_and_opendde_omit_monomer_placeholder_iptm()
-    def test_unscored(self): test_unscored_models_remain_unscored()
-    def test_exact_binding(self): test_nested_scores_require_exact_native_coordinate_binding()
-    def test_af3(self): test_af3_averages_native_atoms_and_requires_single_chain()
+    def test_af2(self): check_af2_monomer_ranking_is_plddt_and_not_multimer_ranking()
+    def test_boltz_opendde(self): check_boltz_rescaling_and_opendde_omit_monomer_placeholder_iptm()
+    def test_unscored(self): check_unscored_models_remain_unscored()
+    def test_exact_binding(self): check_nested_scores_require_exact_native_coordinate_binding()
+    def test_af3(self): check_af3_averages_native_atoms_and_requires_single_chain()
     def test_invalid_scores(self):
         for value in [-1, 101, True, float('nan'), float('inf'), '90']:
-            with self.subTest(value=value): test_invalid_confidence_never_becomes_fabricated_score(value)
+            with self.subTest(value=value): check_invalid_confidence_never_becomes_fabricated_score(value)
