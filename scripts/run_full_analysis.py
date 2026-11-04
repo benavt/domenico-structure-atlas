@@ -109,7 +109,19 @@ def main():
                 return
             time.sleep(5)
     threading.Thread(target=storage_guard, daemon=True).start()
-    validate(plan, root)
+    if plan.get('verified_validation_receipt'):
+        proof_path = Path(plan['verified_validation_receipt'])
+        if sha256(proof_path) != plan['verified_validation_receipt_sha256']:
+            raise ValueError('Verified native validation proof changed')
+        proof = json.loads(proof_path.read_text())
+        if proof['status'] != 'validated' or proof['library_commit'] != plan['sources']['library']['commit']:
+            raise ValueError('Native validation belongs to different analysis code')
+        for path, digest in proof['frozen_files'].items():
+            if sha256(path) != digest:
+                raise ValueError('Saved native validation artifact changed')
+        print('Reusing explicit hash-verified native validation; no fixture projection fits.', flush=True)
+    else:
+        validate(plan, root)
     confidence = collect_confidence(plan, root)
     import confidence as native_confidence
     from workflow import load_intake
