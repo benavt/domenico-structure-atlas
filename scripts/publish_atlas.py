@@ -45,6 +45,28 @@ def continuous(key, name, values):
             'range': [min(finite), max(finite)] if finite else [0, 1], 'unavailable': not finite}
 
 
+def public_bonsai(tree):
+    """Carry saved geometry and scientific evidence without private runtime paths."""
+    result = {key: tree[key] for key in ['schema_version', 'models', 'layouts', 'method', 'scope', 'group_count']}
+    proof = tree['provenance']
+    evidence = {key: proof[key] for key in ['result_sha256', 'hdf_sha256', 'tree_sha256',
+        'model_order_sha256', 'source_features_sha256', 'retained_reference_positions',
+        'pair_mask_sha256', 'feature_count']}
+    settings = proof['settings']
+    evidence['settings'] = {key: settings[key] for key in ['schema_version', 'max_components',
+        'rescale_by_var', 'use_knn', 'grouping', 'terminal_settings'] if key in settings}
+    runtime = settings.get('native_runtime_compatibility')
+    if runtime:
+        public_runtime = {key: runtime[key] for key in ['schema_version', 'repair',
+            'native_helper_sha256', 'implementation_sha256', 'external_files_modified']}
+        public_runtime['native_modules'] = [{key: row[key] for key in ['module',
+            'source_sha256', 'runtime_source_sha256', 'tracked_patch_sha256']}
+            for row in runtime['native_modules']]
+        evidence['settings']['native_runtime_compatibility'] = public_runtime
+    result['provenance'] = evidence
+    return result
+
+
 def build(plan_path):
     from native_ca import write_ca
     from structure_clustering.publication import export
@@ -200,8 +222,10 @@ def build(plan_path):
             tree_names=[row['model'] for row in tree['models']]
             if len(set(tree_names))!=len(tree_names) or not set(tree_names).issubset(names):
                 raise ValueError('Saved Bonsai contains different model identities')
-            tree_file=folder/'bonsai.json';shutil.copyfile(entry['path'],tree_file)
-            data['bonsai']={'file':str(tree_file.relative_to(source)),'sha256':entry['sha256'],'selected_models':len(tree_names)}
+            tree_file=folder/'bonsai.json'
+            tree_file.write_text(json.dumps(public_bonsai(tree),separators=(',',':'),allow_nan=False)+'\n')
+            data['bonsai']={'file':str(tree_file.relative_to(source)),'sha256':sha256(tree_file),'selected_models':len(tree_names)}
+            data['provenance']['bonsai_native_export_sha256']=entry['sha256']
             data['provenance']['bonsai_scope']='Only the default displayed confidence-selected ensembles; native saved tree, not a whole-cohort tree.'
         scope={'chain':'A','sequence_sha256':study['targets'][target]['sequence_sha256'],'expected_ca_count':count,
                'canonical_positions':[index+1 for index in detection['retained_reference_positions']],

@@ -58,7 +58,23 @@ class EndToEndPublication(unittest.TestCase):
                     'knn_clustering':{'labels_csv':str(labels)},'cluster_ensembles':{'report':str(report)},
                     'terminal_detection':{'pair_mask_sha256':'b'*64,'excluded_indices':[],'retained_reference_positions':list(range(4))},
                     'visualize_distogram':{'images':[]}})
-                workflows[t]={'manifest':str(manifest),'manifest_sha256':sha256(manifest)}
+                # Native Bonsai export carries private runtime locations in settings.
+                # Publication must preserve its geometry/hashes, with public-byte hashes.
+                tree=save(t+'/native-bonsai.json',{'schema_version':1,
+                    'models':[{'model':name,'vertex':i,'bonsai_group':'B1'} for i,name in enumerate(names)],
+                    'layouts':[{'key':'fixture','title':'Fixture only','nodes':[[0.,0.],[1.,0.],[0.,1.],[1.,1.]],'edges':[[0,1],[1,2],[2,3]]}],
+                    'method':'Saved fixture geometry; no fit','scope':'Fixture only','group_count':1,
+                    'provenance':{**{key:'a'*64 for key in ['result_sha256','hdf_sha256','tree_sha256','model_order_sha256','source_features_sha256','pair_mask_sha256']},
+                        'retained_reference_positions':list(range(4)),'feature_count':6,
+                        'settings':{'schema_version':2,'max_components':None,'rescale_by_var':False,'use_knn':-1,
+                            'grouping':'native','input_archive':str(root/'private-input'),
+                            'native_runtime_compatibility':{'schema_version':1,'repair':'native_guards',
+                                'native_helper':str(root/'private-helper.py'),'native_helper_sha256':'b'*64,
+                                'implementation':str(root/'private-adapter.py'),'implementation_sha256':'c'*64,'external_files_modified':False,
+                                'native_modules':[{'module':'native.module','source_path':str(root/'private-source.py'),
+                                    'tracked_patch':str(root/'private-patch.diff'),'source_sha256':'d'*64,
+                                    'runtime_source_sha256':'e'*64,'tracked_patch_sha256':'f'*64}]}}}})
+                workflows[t]={'manifest':str(manifest),'manifest_sha256':sha256(manifest),'bonsai':descriptor(tree)}
                 targets[t]={'title':t,'models':4,'residues':4,'sequence_sha256':hashlib.sha256(b'AAAA').hexdigest()}
             native=save('native.json',{'status':'validated','models':rows})
             confidence=save('confidence.json',{'status':'validated','models':conf,'source_manifest_sha256':sha256(native)})
@@ -87,6 +103,14 @@ class EndToEndPublication(unittest.TestCase):
                 self.assertEqual(data['representatives'][0]['ensemble_format'],'cif')
                 self.assertEqual(data['original_archive']['models'],4)
                 self.assertNotIn(str(root),json.dumps(data))
+                tree_file=root/'site'/data['bonsai']['file']
+                self.assertEqual(data['bonsai']['sha256'],sha256(tree_file))
+                tree=json.loads(tree_file.read_text());self.assertNotIn(str(root),json.dumps(tree))
+                self.assertEqual(len(tree['models']),4)
+                runtime=tree['provenance']['settings']['native_runtime_compatibility']
+                self.assertEqual(runtime['implementation_sha256'],'c'*64)
+                self.assertEqual(runtime['native_modules'][0]['tracked_patch_sha256'],'f'*64)
+                self.assertEqual(data['provenance']['bonsai_native_export_sha256'],workflows[target['id']]['bonsai']['sha256'])
 
 
 if __name__=='__main__':unittest.main()
