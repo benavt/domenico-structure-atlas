@@ -23,9 +23,10 @@ The intended IOWeight=10 was not demonstrated effective: every RBP io.stat
 sample was missing and the I/O controller was disabled below the root cgroup.
 A relative I/O weight is not a bandwidth or latency cap. A 29 ms control-only
 user-service probe confirmed that adding IOAccounting=yes alone still produced
-no io.stat. A system-manager transient service running as the original user is
-the narrower candidate to verify, avoiding a restart or reconfiguration of the
-desktop user manager. It must refuse science unless actual accounting works.
+no io.stat. System-manager services could obtain kernel accounting while still
+running as the original user, but administrator authentication is unavailable.
+The proposed recovery instead explicitly selects persistent-worker I/O counters
+alongside the already available job-cgroup pressure, avoiding host changes.
 
 ## Source preparation
 
@@ -74,12 +75,17 @@ or leave a large disposable workspace resident while waiting. Escalate to a
 checkpointed stop when the approved bounds expire. Keep per-resource counters
 so an I/O warning does not accumulate into an unrelated fatal memory counter.
 
-The next named service must request IOAccounting=yes and verify real io.stat
-availability before scientific work. Record job and host pressure, completed
-units, checkpoint age and telemetry-write latency. Missing accounting must not
-be interpreted as zero I/O. Do not rely on IOWeight or select a new universal
-I/O percentage without measurements. Any rate/IOPS cap or host configuration
-change needs a concrete reviewed configuration.
+The guard defaults to requiring kernel io.stat. The proposed user-service
+recovery explicitly selects worker accounting instead: real job-cgroup
+io.pressure, verified zero swap, persistent-worker /proc/PID/io counters and
+verified safe-boundary progress. Missing kernel io.stat remains null with a
+capability warning. Worker counters have incomplete native-child attribution;
+they are not a whole-job bandwidth measurement or an enforced I/O limit.
+Missing required worker/pressure observations still stop work. Record host and
+job pressure, completed units, checkpoint age and telemetry-write latency.
+Do not rely on IOWeight, silently substitute accounting modes, or select a new
+universal I/O percentage. A rate/IOPS cap or host change requires its own concrete
+configuration; this recovery proposes neither.
 
 The cooperative guard candidate and recovery adapter need source review and
 an exact new execution plan before use. No recovery run, controller setting,
