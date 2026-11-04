@@ -213,6 +213,7 @@ class EndToEndPublication(unittest.TestCase):
             self.assertEqual(displayed['medoid_tm']['labels'],['D1','D2'])
             self.assertNotEqual(primary['representatives'][0]['file'],displayed['representatives'][0]['file'])
             self.assertEqual(displayed['provenance']['density_analysis_sha256'],sha256(analysis))
+            self.assertEqual(displayed['provenance']['density_diagnostics']['status'],'legacy_not_recorded')
             self.assertEqual(displayed['provenance']['bonsai_scope'],'Fixture only')
             self.assertNotIn('model_files',displayed);self.assertFalse((root/'dual-delivery'/t/'models').exists())
             with (root/'dual-delivery'/displayed['membership_file']).open() as stream:density_members=list(csv.DictReader(stream))
@@ -222,6 +223,8 @@ class EndToEndPublication(unittest.TestCase):
             # The controller can attach separately verified saved-state artifacts before one export.
             panel=root/'dual-delivery'/t/'verified-panel.json';panel.write_text('{"fixture":"saved panel receipt"}\n')
             export_prepared(prepared)
+            app_hash=sha256(root/'dual-site/app.js')[:12]
+            self.assertIn('app.js?v='+app_hash,(root/'dual-site/index.html').read_text())
             allowlist=json.loads(Path(prepared['publication_manifest']).read_text())['files']
             self.assertIn(t+'/verified-panel.json',{row['path'] for row in allowlist})
             self.assertTrue((root/'dual-site'/t/'verified-panel.json').is_file())

@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 
 from snapshot import sha256
@@ -106,7 +107,158 @@ def memberships(path, names):
     return labels, colors
 
 
-def saved_views(frozen, manifest, target, names):
+def density_diagnostics(analysis, labels, names, source_sha256, *, strict=False):
+    """Read compact saved quality evidence without exposing paths or refitting."""
+    required = {'mode', 'inference_settings', 'stopping', 'history', 'selections',
+                'structural_clusters', 'unassigned_models', 'native_source',
+                'selected_fits', 'UMAP_fits', 'HDBSCAN_extractions'}
+    present = required.intersection(analysis)
+    if not present and not strict:
+        return {'status': 'legacy_not_recorded', 'source_analysis_sha256': source_sha256,
+                'note': 'This legacy saved density view did not record repeat-seed diagnostics.'}
+    def require(value, message):
+        if not value: raise ValueError('Saved density diagnostics: '+message)
+    def integer(value, limit):
+        return type(value) is int and 0 <= value <= limit
+    def number(value, low, high):
+        return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+    def digest(value):
+        return isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value)
+    def population(values):
+        require(isinstance(values, list) and len(values) == len(names)
+                and all(isinstance(label, str) and re.fullmatch('[A-Za-z0-9_.-]+', label) for label in values),
+                'invalid full-cohort round labels')
+        counts = Counter(values)
+        return counts, sum(value for label, value in counts.items() if label.endswith('.unassigned'))
+    require(present == required, 'complete native evidence is required')
+    n = len(names); final = [labels[name]['cluster_label'] for name in names]
+    counts, unassigned = population(final)
+    structural = sum(not label.endswith('.unassigned') for label in counts)
+    require(analysis['structural_clusters'] == structural and analysis['unassigned_models'] == unassigned,
+            'final counts differ from saved membership CSV')
+    mode, settings = analysis['mode'], analysis['inference_settings']
+    expected = dict(seeds=[42, 7, 123], n_neighbors=30, min_dist=0., min_cluster_size=15,
+                    min_samples=11, dimension=10, metric='euclidean', primary_extraction='leaf', primary_seed=42)
+    require(mode in {'casp17_recursive', 'global'} and isinstance(settings, dict)
+            and all(settings.get(key) == value for key, value in expected.items())
+            and type(settings.get('workers')) is int and 1 <= settings['workers'] <= 4,
+            'inference recipe differs from the recorded native protocol')
+    public_settings = {key: settings[key] for key in [*expected, 'workers']}
+    selections, history = analysis['selections'], analysis['history']
+    require(isinstance(selections, list) and len(selections) <= 5
+            and isinstance(history, list) and 1 <= len(history) <= 6,
+            'selection/round evidence exceeds the recorded envelope')
+    require(analysis['selected_fits'] == len(selections) and analysis['UMAP_fits'] == 3*len(selections)
+            and analysis['HDBSCAN_extractions'] == 6*len(selections), 'native fit counters differ')
+    selection_by_path, compact_selections = {}, []
+    for ordinal, selection in enumerate(selections):
+        require(isinstance(selection, dict) and isinstance(selection.get('directory'), str)
+                and selection['directory'] not in selection_by_path, 'duplicate or missing native selection binding')
+        indices = selection.get('selected_indices')
+        require(isinstance(indices, list) and indices == sorted(set(indices)) and indices
+                and all(integer(index, n-1) for index in indices)
+                and selection.get('models') == [names[index] for index in indices], 'selection registry differs')
+        size = len(indices); evidence = selection.get('diagnostics', {})
+        require(evidence.get('dimension') == 10
+                and evidence.get('settings') == {key: settings[key] for key in ['seeds','n_neighbors','min_dist','min_cluster_size','min_samples','workers']},
+                'selection settings differ from the native recipe')
+        rows = evidence.get('fits')
+        require(isinstance(rows, list) and len(rows) == 6
+                and {(row.get('seed'), row.get('method')) for row in rows} == {(seed, method) for seed in [42,7,123] for method in ['leaf','eom']},
+                'all six seed/method extraction records are required')
+        fits, by_fit = [], {}
+        for row in rows:
+            require(integer(row.get('clusters'), size) and integer(row.get('noise_models'), size)
+                    and row['clusters'] <= size-row['noise_models']
+                    and number(row.get('elapsed_seconds_from_seed_start'), 0, 7*24*3600), 'invalid fit count/noise/time')
+            public = {key: row[key] for key in ['seed','method','clusters','noise_models','elapsed_seconds_from_seed_start']}
+            fits.append(public); by_fit[(row['seed'], row['method'])] = row
+        agreement = evidence.get('seed_agreement')
+        require(isinstance(agreement, dict) and set(agreement) == {'leaf','eom'}, 'seed agreement is missing')
+        public_agreement = {}
+        for method in ['leaf','eom']:
+            require(isinstance(agreement[method], dict) and set(agreement[method]) == {'7','123'}, 'both repeat-seed comparisons are required')
+            public_agreement[method] = {}
+            for seed in ['7','123']:
+                row = agreement[method][seed]; joint = row.get('jointly_assigned_models')
+                require(integer(joint, size) and number(row.get('jointly_assigned_fraction'), 0, 1)
+                        and abs(row['jointly_assigned_fraction']-joint/size) < 1e-12
+                        and number(row.get('ari_including_noise'), -1, 1)
+                        and (row.get('ari_jointly_assigned') is None if joint < 2 else number(row.get('ari_jointly_assigned'), -1, 1))
+                        and number(row.get('noise_status_agreement'), 0, 1), 'invalid saved agreement metrics')
+                left, right = by_fit[(42, method)], by_fit[(int(seed), method)]
+                both_noise = left['noise_models']+right['noise_models']-size+joint
+                require(0 <= both_noise <= min(left['noise_models'], right['noise_models'])
+                        and joint <= min(size-left['noise_models'], size-right['noise_models'])
+                        and abs(row['noise_status_agreement']-(joint+both_noise)/size) < 1e-12,
+                        'agreement coverage differs from fit noise counts')
+                public_agreement[method][seed] = {key: row[key] for key in ['ari_including_noise','jointly_assigned_models',
+                    'jointly_assigned_fraction','ari_jointly_assigned','noise_status_agreement']}
+        result_sha = selection.get('files_sha256', {}).get('result.json')
+        require(digest(result_sha) and digest(selection.get('feature_sha256')), 'selection source hashes are missing')
+        public = dict(selection=ordinal, selected_models=size, result_sha256=result_sha,
+            feature_sha256=selection['feature_sha256'], fits=fits, seed_agreement=public_agreement)
+        selection_by_path[selection['directory']] = (ordinal, selection, by_fit)
+        compact_selections.append(public)
+    compact_rounds, used = [], set()
+    for ordinal, row in enumerate(history):
+        require(row.get('round') == ordinal, 'round numbering differs')
+        current, noise = population(row.get('labels'))
+        total = sum(not label.endswith('.unassigned') for label in current)
+        require(row.get('structural_clusters') == total and row.get('populations') == dict(current)
+                and ('unassigned_models' not in row or row['unassigned_models'] == noise), 'round population totals differ')
+        compact = dict(round=ordinal, structural_clusters=total, unassigned_models=noise)
+        if ordinal:
+            parent, size, children, fitted_noise = (row.get(key) for key in ['selected_leaf','selected_models','child_clusters','noise_models_in_fit'])
+            require(isinstance(parent, str) and re.fullmatch('[A-Za-z0-9_.-]+', parent)
+                    and integer(size, n) and size > 0 and integer(children, size) and integer(fitted_noise, size)
+                    and row.get('fit') in selection_by_path, 'round selection/count binding is invalid')
+            selected_ordinal, selected, fits = selection_by_path[row['fit']]; used.add(selected_ordinal)
+            previous = history[ordinal-1]['labels']
+            expected_indices = list(range(n)) if mode == 'global' else [i for i, label in enumerate(previous) if label == parent]
+            require(selected['selected_indices'] == expected_indices and len(expected_indices) == size
+                    and fits[(42, 'leaf')]['clusters'] == children and fits[(42, 'leaf')]['noise_models'] == fitted_noise,
+                    'round counts differ from the selected native seed42 extraction')
+            chosen = set(expected_indices)
+            if mode == 'casp17_recursive' and children < 2:
+                require(row['labels'] == previous, 'unsplit-parent policy changed the saved labels')
+            else:
+                child_labels = [row['labels'][index] for index in expected_indices]
+                prefix = 'C1.' if mode == 'global' else parent+'.'
+                require(all(value.startswith(prefix) for value in child_labels)
+                        and sum(value.endswith('.unassigned') for value in child_labels) == fitted_noise
+                        and len({value for value in child_labels if not value.endswith('.unassigned')}) == children
+                        and all(value == previous[index] for index, value in enumerate(row['labels']) if index not in chosen),
+                        'round child/noise labels differ from saved extraction counts')
+            compact.update(selected_leaf=parent, selected_models=size, child_clusters=children,
+                           noise_models_in_fit=fitted_noise, selection=selected_ordinal)
+        compact_rounds.append(compact)
+    require(history[-1]['labels'] == final and used == set(range(len(selections))), 'round history differs from final CSV or fit registry')
+    stopping = analysis['stopping']
+    reasons = {'two_or_fewer_child_clusters','five_refinement_limit','insufficient_models_for_frozen_settings','single_global_fit'}
+    require(isinstance(stopping, dict) and stopping.get('round') == len(history)-1
+            and stopping.get('reason') in reasons, 'stopping record differs from completed rounds')
+    public_stop = {key: stopping[key] for key in ['round','reason']}
+    if 'child_clusters' in stopping:
+        require(stopping['child_clusters'] == history[-1].get('child_clusters'), 'stopping child count differs')
+        public_stop['child_clusters'] = stopping['child_clusters']
+    native = analysis['native_source']
+    require(isinstance(native, dict) and digest(native.get('sha256')) and digest(native.get('hierarchical_colors_sha256')),
+            'native implementation source hashes are missing')
+    varied = sum(len({fit['noise_models'] for fit in row['fits'] if fit['method'] == 'leaf'}) > 1 for row in compact_selections)
+    note = (f'Exploratory seed42 HDBSCAN labels: {unassigned:,} of {n:,} models remain unassigned. '
+            f'Repeat seeds changed leaf noise counts in {varied} of {len(selections)} fitted selections; '
+            'inspect the saved count and agreement diagnostics. Repeat diagnostics are not a stability acceptance gate. '
+            'Fitted noise can differ from final unassigned membership when an unsplit parent is retained.')
+    return dict(schema_version=1, status='complete', source_analysis_sha256=source_sha256,
+        native_source_sha256=native['sha256'], hierarchical_colors_sha256=native['hierarchical_colors_sha256'],
+        models=n, structural_clusters=structural, unassigned_models=unassigned, mode=mode,
+        inference_settings=public_settings, stopping=public_stop, rounds=compact_rounds, selections=compact_selections,
+        selected_fits=len(selections), UMAP_fits=analysis['UMAP_fits'], HDBSCAN_extractions=analysis['HDBSCAN_extractions'],
+        repeat_seed_leaf_noise_varied_selections=varied, interpretation=note)
+
+
+def saved_views(frozen, manifest, target, names, *, strict=False):
     primary = {'id': 'primary' if frozen.get('density_artifacts') else 'whole',
                'name': 'UMAP KNN', 'data': 'primary.json',
                'labels_csv': manifest['knn_clustering']['labels_csv'],
@@ -131,10 +283,12 @@ def saved_views(frozen, manifest, target, names):
         labels, _ = memberships(artifacts['labels_csv']['path'], names)
         if analysis.get('density') != [labels[name]['cluster_label'] for name in names]:
             raise ValueError('Saved HDBSCAN labels differ from the completed analysis')
+        quality = density_diagnostics(analysis, labels, names, artifacts['analysis']['sha256'], strict=strict)
+        method_note = analysis['method_note']+' '+quality.get('interpretation', quality.get('note', ''))
         views.append({'id': 'density', 'name': 'HDBSCAN', 'data': 'density.json',
                       'labels_csv': artifacts['labels_csv']['path'],
                       'ensemble_report': artifacts['ensemble_report']['path'],
-                      'method_note': analysis['method_note'], 'analysis_sha256': artifacts['analysis']['sha256'],
+                      'method_note': method_note, 'analysis_sha256': artifacts['analysis']['sha256'], 'density_diagnostics': quality,
                       'bonsai': artifacts.get('bonsai'), 'medoid_tm': artifacts.get('medoid_tm')})
     return views
 
@@ -346,7 +500,7 @@ def build(plan_path, *, export_site=True):
         expected = {name: row for name, row in by_native.items() if row['target'] == target}
         if len(expected) != study['targets'][target]['models']: raise ValueError('Wrong target snapshot count')
         names, xy = projections(manifest, expected)
-        views = saved_views(frozen, manifest, target, names)
+        views = saved_views(frozen, manifest, target, names, strict=plan.get('require_rbp_parity', False))
         folder = source/target; folder.mkdir()
         primary_labels, _ = memberships(views[0]['labels_csv'], names)
         model_files, display_hashes, native_hashes = [], [], []
@@ -424,6 +578,7 @@ def build(plan_path, *, export_site=True):
                     'labels_csv_sha256': sha256(view['labels_csv']), 'ensemble_report_sha256': sha256(view['ensemble_report']),
                     'energy_units': 'learned arbitrary units; lower within target; not confidence or calibrated free energy'}}
             if view.get('analysis_sha256'): data['provenance']['density_analysis_sha256'] = view['analysis_sha256']
+            if view.get('density_diagnostics'): data['provenance']['density_diagnostics'] = view['density_diagnostics']
             if delivery == 'all-point-ca':
                 data.update(model_files=model_files, model_sha256=display_hashes, model_native_sha256=native_hashes,
                     model_representation='ca_trace', model_structure_confidence=[None]*len(names), model_physicality=flags, original_archive=public_archive)
@@ -476,6 +631,7 @@ def build(plan_path, *, export_site=True):
         if ranges['targets'] else 'Default validated common cluster partition. ')
     publication = {'schema_version': 1, 'project': 'domenico-structure-atlas', 'renderer': 'ais-explorer-v1',
         'presentation': {'title': title, 'methods': scope_note+'Accepted fixed scored snapshot. Full-construct Cα distances. '+clustering_note+'Genuine native confidence and separate saved ProteinEBM energies. '+coordinate_note+'Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'}, 'files': []}
+    if ranges['targets']: publication['presentation']['clustering_order'] = 'hdbscan-first'
     manifest = source.parent/'publication-manifest.json'; manifest.write_text(json.dumps(publication, indent=2)+'\n')
     prepared = {'source': str(source), 'output': str(output), 'publication_manifest': str(manifest),
         'coordinate_delivery': delivery, 'target_views': bindings, 'renderer_commit': plan['renderer_commit']}

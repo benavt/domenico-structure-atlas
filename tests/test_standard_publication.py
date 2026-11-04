@@ -112,6 +112,81 @@ class PublicationTests(unittest.TestCase):
                 with self.subTest(selection=selection),self.assertRaisesRegex(ValueError,'explicit valid'):
                     report_downloads([wrong],4,'density',strict=True)
 
+    def density_fixture(self):
+        from collections import Counter
+        names=[f'opaque_model_{i:04d}' for i in range(60)]
+        initial=['C1']*40+['C2']*20
+        final=['C1.1']*15+['C1.2']*15+['C1.unassigned']*10+['C2']*20
+        settings={'seeds':[42,7,123],'n_neighbors':30,'min_dist':0.,'min_cluster_size':15,'min_samples':11,'workers':2}
+        fits=[]
+        for seed,leaf_noise,eom_noise in [(42,10,2),(7,8,3),(123,6,4)]:
+            for method,noise,clusters in [('leaf',leaf_noise,2),('eom',eom_noise,1)]:
+                fits.append({'seed':seed,'method':method,'clusters':clusters,'noise_models':noise,
+                    'elapsed_seconds_from_seed_start':100.+seed/1000,'private_path':'/home/private/fit'})
+        agreement={}
+        for method,records in [('leaf',[(7,28,.6,.95,.85),(123,29,.55,.93,.85)]),
+                               ('eom',[(7,36,.8,.9,.925),(123,35,.75,.85,.9)])]:
+            agreement[method]={str(seed):{'ari_including_noise':ari,'jointly_assigned_models':joint,
+                'jointly_assigned_fraction':joint/40,'ari_jointly_assigned':joint_ari,
+                'noise_status_agreement':noise_agreement,'private_path':'/home/private/repeat'}
+                for seed,joint,ari,joint_ari,noise_agreement in records}
+        directory='/home/private/runtime/fits/selection-00-10D'
+        analysis={'mode':'casp17_recursive','structural_clusters':3,'unassigned_models':10,
+            'selected_fits':1,'UMAP_fits':3,'HDBSCAN_extractions':6,
+            'inference_settings':dict(settings,dimension=10,metric='euclidean',primary_extraction='leaf',primary_seed=42,
+                private_path='/home/private/runtime'),
+            'stopping':{'round':1,'reason':'two_or_fewer_child_clusters','child_clusters':2,'private_path':'/home/private/stop'},
+            'history':[{'round':0,'labels':initial,'populations':dict(Counter(initial)),'structural_clusters':2},
+                {'round':1,'labels':final,'populations':dict(Counter(final)),'selected_leaf':'C1','selected_models':40,
+                    'child_clusters':2,'noise_models_in_fit':10,'structural_clusters':3,'unassigned_models':10,'fit':directory}],
+            'selections':[{'directory':directory,'selected_indices':list(range(40)),'models':names[:40],
+                'feature_sha256':'b'*64,'files_sha256':{'result.json':'c'*64,'/home/private/extra':'d'*64},
+                'diagnostics':{'dimension':10,'settings':settings,'fits':fits,'seed_agreement':agreement,'private_path':'/home/private/result'}}],
+            'native_source':{'path':'/home/private/native.py','sha256':'d'*64,'hierarchical_colors_sha256':'e'*64},
+            'private_bindings':{'host':'/home/private/runtime'},'source_model_files':['/home/private/native.pdb']}
+        return analysis,{name:{'cluster_label':label} for name,label in zip(names,final)},names
+
+    def test_density_diagnostics_publish_saved_counts_and_agreement_without_private_arrays(self):
+        from publish_atlas import density_diagnostics
+        analysis,labels,names=self.density_fixture()
+        result=density_diagnostics(analysis,labels,names,'a'*64,strict=True)
+        self.assertEqual(result['status'],'complete');self.assertEqual(result['models'],60)
+        self.assertEqual(result['structural_clusters'],3);self.assertEqual(result['unassigned_models'],10)
+        self.assertEqual(result['repeat_seed_leaf_noise_varied_selections'],1)
+        self.assertEqual(result['rounds'][1]['noise_models_in_fit'],10)
+        self.assertEqual(result['selections'][0]['fits'][0]['elapsed_seconds_from_seed_start'],100.042)
+        self.assertEqual(result['selections'][0]['seed_agreement']['leaf']['7']['ari_including_noise'],.6)
+        self.assertEqual(result['selections'][0]['seed_agreement']['leaf']['7']['ari_jointly_assigned'],.95)
+        self.assertIn('not a stability acceptance gate',result['interpretation'])
+        encoded=json.dumps(result)
+        for forbidden in ['/home/','opaque_model_','directory','selected_indices','populations','private_','source_model_files']:
+            self.assertNotIn(forbidden,encoded)
+        self.assertNotIn('labels',result['rounds'][1]);self.assertNotIn('models',result['selections'][0])
+        self.assertNotIn('≥0.80',result['interpretation'])
+
+    def test_density_diagnostics_reject_inconsistent_native_evidence_and_make_legacy_absence_explicit(self):
+        from publish_atlas import density_diagnostics
+        from copy import deepcopy
+        analysis,labels,names=self.density_fixture()
+        for change in ['final_count','round_count','fit_count','agreement_fraction','agreement_noise','source_hash','time','parent']:
+            value=deepcopy(analysis)
+            if change=='final_count':value['unassigned_models']=9
+            elif change=='round_count':value['history'][1]['populations']['C1.1']=14
+            elif change=='fit_count':value['selections'][0]['diagnostics']['fits'][0]['noise_models']=9
+            elif change=='agreement_fraction':value['selections'][0]['diagnostics']['seed_agreement']['leaf']['7']['jointly_assigned_fraction']=.5
+            elif change=='agreement_noise':value['selections'][0]['diagnostics']['seed_agreement']['leaf']['7']['noise_status_agreement']=.1
+            elif change=='source_hash':value['native_source']['sha256']='/home/private/native.py'
+            elif change=='time':value['selections'][0]['diagnostics']['fits'][0]['elapsed_seconds_from_seed_start']=float('nan')
+            else:value['history'][1]['selected_leaf']='/home/private/leaf'
+            with self.subTest(change=change),self.assertRaisesRegex(ValueError,'Saved density diagnostics'):
+                density_diagnostics(value,labels,names,'a'*64,strict=True)
+        legacy=density_diagnostics({},labels,names,'a'*64)
+        self.assertEqual(legacy['status'],'legacy_not_recorded')
+        with self.assertRaisesRegex(ValueError,'complete native evidence'):
+            density_diagnostics({},labels,names,'a'*64,strict=True)
+        with self.assertRaisesRegex(ValueError,'complete native evidence'):
+            density_diagnostics({'mode':'casp17_recursive'},labels,names,'a'*64)
+
     @unittest.skipUnless(importlib.util.find_spec('numpy'), 'Native saved-array reader is optional in source CI')
     def test_missing_or_mismatched_real_projection_cohort_is_rejected(self):
         import numpy as np
