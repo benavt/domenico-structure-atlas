@@ -58,6 +58,9 @@ class RecoveryAdapterTests(unittest.TestCase):
                     adapter.recover(intake,inventory,root/'distances',root/'output',settings,catalog)
                     report=json.loads((root/'output/screening.json').read_text())
                     self.assertEqual(report['recovery_validation_sha256'],adapter.digest(root/'output/verified_distograms.json'))
+                    with patch('src.generation.distogram.calculate_distogram',side_effect=AssertionError('Verified rows must not be recomputed')):
+                        adapter.recover(intake,inventory,root/'distances',root/'resumed',settings,catalog,root/'output/verification_checkpoint.json')
+                    self.assertTrue((root/'resumed/screening.json').exists())
                 self.assertEqual((root/'distances/m.bin').read_bytes(),values.tobytes())
 
     def test_ndarray_return_and_report_completion(self):self.exercise()

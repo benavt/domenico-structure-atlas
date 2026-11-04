@@ -8,7 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.11"
 description = "Frozen RBP, 5NTase and SERCA structure analysis and saved-result publication"
 dependencies = [
-  "structure-clustering @ git+https://github.com/benavt/Structure_Clustering.git@45016be887e335300a89e00f4b5a88a06ac4f168",
+  "structure-clustering @ git+https://github.com/benavt/Structure_Clustering.git@0357e554fa1e2fc537d035fbc45c16a4bd52d1c8",
 ]
 
 [project.optional-dependencies]

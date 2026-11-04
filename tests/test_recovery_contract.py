@@ -36,3 +36,18 @@ class ResourceControlTests(unittest.TestCase):
                 (root/name).write_text(bad)
                 with self.subTest(name=name,bad=bad),self.assertRaises(ValueError):verify_controls(root,limits)
                 (root/name).write_text(baseline[name])
+
+
+class VerificationCheckpointTests(unittest.TestCase):
+    def test_checkpoint_requires_exact_header_and_unique_identities(self):
+        import tempfile
+        from recover_screen import load_checkpoint,save_checkpoint
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'proof.json';header={'protocol':1,'input_hash':'a'}
+            rows=[{'model':'m','input_sha256':'a','distance_sha256':'b'}]
+            save_checkpoint(p,header,rows)
+            self.assertEqual(load_checkpoint(p,header),{'m':rows[0]})
+            with self.assertRaisesRegex(ValueError,'changed'):load_checkpoint(p,{'protocol':1,'input_hash':'c'})
+            save_checkpoint(p,header,rows*2)
+            with self.assertRaisesRegex(ValueError,'Duplicate'):load_checkpoint(p,header)
+            self.assertFalse(p.with_suffix('.partial').exists())

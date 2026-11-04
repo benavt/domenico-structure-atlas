@@ -2,6 +2,8 @@
 import argparse
 import hashlib
 import json
+import os
+import sys
 from pathlib import Path
 
 
@@ -23,7 +25,28 @@ def validate_bindings(intake, inventory, names):
         raise ValueError('Saved distance file coverage differs from intake')
 
 
-def recover(intake_path, inventory_path, directory, output, terminal_config, distance_catalog):
+def load_checkpoint(path, header):
+    if path is None: return {}
+    data = json.loads(Path(path).read_text())
+    if data['header'] != header:
+        raise ValueError('Verification checkpoint source, runtime or inputs changed')
+    rows = {row['model']:row for row in data['models']}
+    if len(rows) != len(data['models']): raise ValueError('Duplicate verified model identity')
+    return rows
+
+
+def save_checkpoint(path, header, rows):
+    temporary = Path(path).with_suffix('.partial')
+    with temporary.open('w') as stream:
+        json.dump(dict(header=header,models=rows),stream,indent=2)
+        stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    os.replace(temporary,path)
+    descriptor = os.open(Path(path).parent,os.O_RDONLY|os.O_DIRECTORY)
+    try: os.fsync(descriptor)
+    finally: os.close(descriptor)
+
+
+def recover(intake_path, inventory_path, directory, output, terminal_config, distance_catalog, prior_checkpoint=None):
     import numpy as np
     from src.analysis.structure_io import get_structure
     from src.analysis.sequence import Sequence
@@ -51,33 +74,51 @@ def recover(intake_path, inventory_path, directory, output, terminal_config, dis
     frozen = {row['model']:row for row in catalog['models']}
     if len(frozen) != len(catalog['models']) or set(frozen) != set(by_name) or catalog['input_inventory_sha256'] != digest(inventory_path):
         raise ValueError('Distance catalog differs from frozen inventory')
+    import Bio
+    header = dict(protocol='native_float32_distogram_to_float16_bytes_v1',
+                  input_inventory_sha256=digest(inventory_path),distance_catalog_sha256=digest(distance_catalog),
+                  verifier_source_sha256=digest(__file__),numpy_version=np.__version__,biopython_version=Bio.__version__,
+                  distance_engine_sha256=digest(sys.modules['src.generation.distogram'].__file__),
+                  coordinate_reader_sha256=digest(sys.modules['scripts.pdb_to_distogram'].__file__),
+                  structure_reader_sha256=digest(sys.modules['src.analysis.structure_io'].__file__))
+    cached = load_checkpoint(prior_checkpoint,header)
+    if set(cached)-set(frozen): raise ValueError('Checkpoint has unselected models')
     verified = []
-    for index, row in enumerate(inventory['models'], 1):
-        source = Path(row['source_path'])
+    def verify_row(row):
+        source = Path(row['source_path']);model_id=row['model']
         if digest(source) != row['sha256']:
-            raise ValueError('Native input changed: '+row['model'])
+            raise ValueError('Native input changed: '+model_id)
+        if model_id in cached:
+            receipt=cached[model_id]
+            if (receipt['input_sha256'] != row['sha256'] or row['sha256'] != frozen[model_id]['input_sha256'] or
+                    receipt['distance_sha256'] != frozen[model_id]['distance_sha256'] or
+                    digest(by_name[model_id]) != receipt['distance_sha256']):
+                raise ValueError('Verified checkpoint coordinate/distance hash changed')
+            return receipt
         models = list(get_structure(source))
         if len(models) != 1 or [str(chain.id) for chain in models[0]] != row['chain_ids']:
             raise ValueError('Native conformer or chain identity changed')
         coordinates = get_selected_atoms(source, model=models[0])
         validate_construct(Sequence.from_model(models[0]), len(coordinates), expected_sequence)
         expected = calculate_distogram(coordinates, condensed=True).astype(np.float16)
-        actual = load_distance_matrix(by_name[row['model']], as_full=False, manifest=manifest)
+        actual = load_distance_matrix(by_name[model_id], as_full=False, manifest=manifest)
         try:
             stored_hash = hashlib.sha256(memoryview(actual)).hexdigest()
-            if stored_hash != frozen[row['model']]['distance_sha256'] or row['sha256'] != frozen[row['model']]['input_sha256']:
+            if stored_hash != frozen[model_id]['distance_sha256'] or row['sha256'] != frozen[model_id]['input_sha256']:
                 raise ValueError('Frozen distance/input binding changed')
             if actual.shape != expected.shape or not np.isfinite(actual).all() or actual.tobytes() != expected.tobytes():
-                raise ValueError('Saved distances do not match native coordinates: '+row['model'])
-            verified.append(dict(model=row['model'], input_sha256=row['sha256'],
-                                 distance_sha256=stored_hash))
+                raise ValueError('Saved distances do not match native coordinates: '+model_id)
         finally:
             mapping = getattr(actual, '_mmap', None)
             if mapping is not None: mapping.close()
         if digest(source) != row['sha256']:
             raise ValueError('Input changed during verification')
+        return dict(model=model_id,input_sha256=row['sha256'],distance_sha256=stored_hash)
+    for index,row in enumerate(inventory['models'],1):
+        verified.append(verify_row(row))
         if index % 50 == 0 or index == len(inventory['models']):
-            print(f'Native distance rows verified: {index}/{len(inventory["models"])}', flush=True)
+            save_checkpoint(output/'verification_checkpoint.json',header,verified)
+            print(f'Native distance rows verified and saved: {index}/{len(inventory["models"])}; reused: {len(cached)}',flush=True)
     receipt = dict(schema_version=1, target=intake['target'], input_inventory=str(Path(inventory_path).resolve()),
                    input_inventory_sha256=digest(inventory_path), intake_sha256=digest(intake_path),
                    distance_catalog_sha256=digest(distance_catalog),
@@ -104,8 +145,9 @@ def main():
     p.add_argument('--output',type=Path,required=True)
     p.add_argument('--terminal-config',type=Path,required=True)
     p.add_argument('--distance-catalog',type=Path,required=True)
+    p.add_argument('--prior-checkpoint',type=Path)
     a = p.parse_args()
-    recover(a.intake,a.inventory,a.distograms,a.output,a.terminal_config,a.distance_catalog)
+    recover(a.intake,a.inventory,a.distograms,a.output,a.terminal_config,a.distance_catalog,a.prior_checkpoint)
 
 
 if __name__ == '__main__': main()
