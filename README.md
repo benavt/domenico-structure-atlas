@@ -17,8 +17,8 @@ private submodule require repository access. Published static results will not.
 
 Publication uses the library's canonical `ais-explorer-v1` renderer, matching the
 CASP17 and CDK2 atlas interface. `scripts/publish_atlas.py` requires complete,
-identity-matched PCA, UMAP and t-SNE outputs for all three accepted cohorts. It
-packages saved results only; it never substitutes an older cohort or fabricates
+identity-matched PCA, UMAP and t-SNE outputs for each selected accepted cohort,
+with unpublished targets explicitly marked pending. It packages saved results only; it never substitutes an older cohort or fabricates
 projection coordinates. The initial screening-only site is a superseded interim
 publication, preserved in its approved release and frozen local source.
 
@@ -47,8 +47,11 @@ ProteinEBM uses existing Model6 expert results. Lower **t=0.10** energy is bette
 within a target; these learned units are neither physical kcal/mol nor confidence.
 Energy coloring never substitutes for pLDDT or changes cluster memberships.
 
-The current initial public site contains screening evidence and saved scores;
-its standard atlas replacement requires the real clustering outputs and a
-reviewed publication manifest. Existing releases remain reproducible in Git history.
+For RBP's CASP17-style refinement, see [the parity adapter](docs/rbp-parity.md).
+Its exact approved plan adds recursive HDBSCAN, selected-model Bonsai/TM views
+and full271-residue TM0.80 states with MCMC50/DISCO50 panels. Saved publication
+keeps all projection points and scores while delivering coordinates only for
+representatives and the selected panels. Published release manifests record their
+actual completed coverage; source changes never imply a live-site update.
 
 Run source-only checks with `python3 -m unittest discover -s tests`.
