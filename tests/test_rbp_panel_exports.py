@@ -1,6 +1,7 @@
 """Source-only panel export checks: native parsing/alignment and PyMOL are mocked."""
 import hashlib
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import sys
@@ -46,6 +47,25 @@ class CatalogTests(unittest.TestCase):
                 if kind == 'unsafe-state':state['id'] = '../escape'
                 if kind == 'partition':catalog['unassigned_indices'] = [0]
                 with self.assertRaises(ValueError):adapter.checked_catalog(catalog, members)
+
+
+class PyMOLAPITests(unittest.TestCase):
+    def test_capability_probe_never_imports_coordinates_and_rejects_legacy_name(self):
+        calls = []
+        reader = lambda *args, **kwargs:calls.append((args, kwargs))
+        self.assertIs(adapter.pymol_pdb_text_reader(SimpleNamespace(read_pdbstr=reader)), reader)
+        self.assertEqual(calls, [])
+        for command in (SimpleNamespace(read_pdb=reader), SimpleNamespace(read_pdbstr=None)):
+            with self.assertRaisesRegex(ValueError, 'callable read_pdbstr'):
+                adapter.pymol_pdb_text_reader(command)
+        self.assertEqual(calls, [])
+
+    @unittest.skipUnless(importlib.util.find_spec('pymol') is not None, 'Optional native PyMOL API introspection')
+    def test_installed_text_reader_accepts_keywords_without_starting_session(self):
+        from pymol import cmd
+        reader = adapter.pymol_pdb_text_reader(cmd)
+        # bind inspects arguments only; it never calls the reader or starts PyMOL.
+        inspect.signature(reader).bind('', 'source_only_api_check', discrete=1)
 
 
 AVAILABLE = importlib.util.find_spec('numpy') is not None
@@ -99,7 +119,7 @@ class MockPyMOL:
     def __exit__(self, *args):pass
     def reinitialize(self):self.frames = []
     def set(self, key, value):self.settings[key] = value
-    def read_pdb(self, text, name, discrete):
+    def read_pdbstr(self, text, name, discrete):
         assert discrete == 1
         for block in text.split('ENDMDL')[:-1]:
             atoms, xyz = adapter._pdb_atoms(block)

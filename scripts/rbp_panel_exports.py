@@ -126,6 +126,13 @@ def _directory(path):
     finally:os.chdir(previous)
 
 
+def pymol_pdb_text_reader(cmd):
+    """Check the command API without starting PyMOL or importing coordinates."""
+    reader = getattr(cmd, 'read_pdbstr', None)
+    need(callable(reader), 'PyMOL must provide callable read_pdbstr for saved PDB text')
+    return reader
+
+
 def _session(pdb_text, expected, coordinates, names, path, color, factory, check, privacy_check):
     """Roundtrip a discrete50 session; load strings/save relative paths for privacy."""
     name = 'saved_state_panel'
@@ -142,8 +149,9 @@ def _session(pdb_text, expected, coordinates, names, path, color, factory, check
                      for a, b in zip(left, right)), 'PSE aligned atom coordinates differ')
     with _directory(path.parent):
         with factory() as pm:
-            cmd = pm.cmd; cmd.reinitialize(); cmd.set('max_threads', 1)
-            cmd.read_pdb(pdb_text, name, discrete=1); verify(cmd)
+            cmd = pm.cmd; reader = pymol_pdb_text_reader(cmd)
+            cmd.reinitialize(); cmd.set('max_threads', 1)
+            reader(pdb_text, name, discrete=1); verify(cmd)
             for frame, model in enumerate(names, 1):cmd.set_title(name, frame, model)
             cmd.hide('everything', 'all'); cmd.show('cartoon', name); cmd.color(color, name)
             cmd.set('all_states', 1); cmd.set('cartoon_transparency', .45); cmd.bg_color('white')
