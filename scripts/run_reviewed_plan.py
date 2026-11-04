@@ -60,12 +60,21 @@ def main():
         code = run_guarded(plan['command'],run/'control',admission=ResourceLimits(**plan['guard']['admission']),
                            runtime=ResourceLimits(**plan['guard']['runtime']),interval_seconds=5,
                            maximum_wall_seconds=plan['resources']['maximum_wall_seconds'],consecutive_failures=3)
-        if code: raise RuntimeError('Recovery failed; preserve logs and review before any retry')
-        output = Path(plan['expected_screening'])
-        if not output.is_file(): raise ValueError('Missing screening receipt')
-        (run/'completion.json').write_text(json.dumps(dict(status='terminal_diagnostics_ready_for_review',
-            plan_sha256=sha256(path),screening=str(output),screening_sha256=sha256(output),
-            projections_fitted=False,molecular_exports_completed=False),indent=2)+'\n')
+        if code: raise RuntimeError('Approved stage failed; preserve logs and review before any retry')
+        if 'expected_result' in plan:
+            output = Path(plan['expected_result'])
+            result = json.loads(output.read_text())
+            if result.get('status') != plan['expected_status']:
+                raise ValueError('Scientific acceptance is incomplete')
+            completion = dict(status=plan['expected_status'], plan_sha256=sha256(path),
+                              result=str(output), result_sha256=sha256(output))
+        else:
+            output = Path(plan['expected_screening'])
+            if not output.is_file(): raise ValueError('Missing screening receipt')
+            completion = dict(status='terminal_diagnostics_ready_for_review',
+                plan_sha256=sha256(path),screening=str(output),screening_sha256=sha256(output),
+                projections_fitted=False,molecular_exports_completed=False)
+        (run/'completion.json').write_text(json.dumps(completion,indent=2)+'\n')
     finally:
         lease.unlink()
 
