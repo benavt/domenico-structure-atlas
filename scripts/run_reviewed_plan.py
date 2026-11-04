@@ -52,7 +52,12 @@ def main():
     if run.exists(): raise FileExistsError('Inspect this attempt before planning recovery')
     subprocess.run([sys.executable,plan['fleet_script'],'storage','preflight',plan['project'],
                     '--required-bytes',str(plan['resources']['additional_storage_bytes'])],check=True)
-    run.mkdir(parents=True);Path(plan['environment']['TMPDIR']).mkdir()
+    run.mkdir(parents=True)
+    if plan.get('scratch'):
+        from analysis_scratch import create
+        create(path, plan)
+    else:
+        Path(plan['environment']['TMPDIR']).mkdir()
     lease = Path(plan['storage_lease'])
     with lease.open('x') as stream:
         json.dump(dict(project=plan['project'],bytes=plan['resources']['additional_storage_bytes'],plan_sha256=sha256(path)),stream)

@@ -129,8 +129,10 @@ def main():
     def storage_guard():
         floor = plan['resources']['preserved_free_space_bytes']
         while True:
-            if shutil.disk_usage(root).free < floor:
-                print('Storage reserve breached; stopping only this analysis process group.', flush=True)
+            ram_scratch_low = (plan.get('scratch') and shutil.disk_usage(plan['environment']['TMPDIR']).free
+                               < plan['scratch']['minimum_free_bytes_during_run'])
+            if shutil.disk_usage(root).free < floor or ram_scratch_low:
+                print('Disk or RAM scratch reserve breached; stopping only this analysis process group.', flush=True)
                 os.killpg(os.getpgrp(), signal.SIGTERM)
                 return
             time.sleep(5)
@@ -177,15 +179,15 @@ def main():
     completion = {'status': 'running', 'targets': {}, 'native_confidence_sha256': sha256(confidence),
                   'execution_plan_sha256': sha256(args.plan)}
     for target in plan['targets']:
-        folder = root/target['identifier']; folder.mkdir()
-        db = folder/'seed-metrics.sqlite'
-        native_confidence.seed(target['intake'], confidence, sha256(confidence), plan['native_manifest'],
-                               plan['model_types'], db)
-        intake = db.with_suffix('.intake.json')
-        load_intake(intake)
-        execute([sys.executable, Path(__file__).with_name('workflow.py'), 'analyze', '--intake', intake,
-                 '--screening', target['screening'], '--processed-root', folder/'processed'])
-        manifests = list((folder/'processed').glob('**/manifest.json'))
+        if target.get('resume_manifest'):
+            saved = Path(target['resume_manifest'])
+            if sha256(saved) != target['resume_manifest_sha256']:
+                raise ValueError('Approved interrupted manifest changed')
+            execute([sys.executable, Path(plan['sources']['library']['checkout'])/'scripts/run_structure_workflow.py',
+                     '--resume-manifest', saved, '--no-open-pymol'])
+            manifests = [saved]
+        else:
+            manifests = analyze_new_target(plan, root, target, confidence, native_confidence, load_intake)
         if len(manifests) != 1:
             raise ValueError('Expected one immutable workflow manifest')
         manifest = json.loads(manifests[0].read_text())
@@ -196,6 +198,18 @@ def main():
         (root/'progress.json').write_text(json.dumps(completion, indent=2)+'\n')
     completion['status'] = 'three_target_analysis_and_camera_sessions_ready'
     (root/'analysis-completion.json').write_text(json.dumps(completion, indent=2)+'\n')
+
+
+def analyze_new_target(plan, root, target, confidence, native_confidence, load_intake):
+    folder = root/target['identifier']; folder.mkdir()
+    db = folder/'seed-metrics.sqlite'
+    native_confidence.seed(target['intake'], confidence, sha256(confidence), plan['native_manifest'],
+                           plan['model_types'], db)
+    intake = db.with_suffix('.intake.json')
+    load_intake(intake)
+    execute([sys.executable, Path(__file__).with_name('workflow.py'), 'analyze', '--intake', intake,
+             '--screening', target['screening'], '--processed-root', folder/'processed'])
+    return list((folder/'processed').glob('**/manifest.json'))
 
 
 if __name__ == '__main__': main()
