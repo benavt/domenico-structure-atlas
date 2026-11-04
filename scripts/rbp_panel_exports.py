@@ -2,8 +2,9 @@
 
 No CLI, selection, TM scoring, fitting or PyMOL startup occurs on import. An
 approved outer runner supplies the saved state catalog, original registry and
-pressure/resource safeguards. The catalog's whole-construct canonical positions
-define the display least-squares fit; native TM membership is never recomputed.
+pressure/resource safeguards. The catalog's validated canonical comparison core
+defines the display fit. Complete construct correspondence and all native atoms
+are preserved; native TM membership is never recomputed.
 """
 from contextlib import contextmanager
 from copy import deepcopy
@@ -53,6 +54,7 @@ def _indices(value, count, *, exact=None):
 def checked_catalog(catalog, members):
     """Validate the saved index/identity contract without opening unselected models."""
     names = catalog['models']; n = len(names); construct = catalog['construct_residues']
+    core = catalog['canonical_positions']
     need(catalog.get('schema_version') == 1
          and catalog.get('kind') == 'saved-clustering-residual-states-and-subsets'
          and catalog.get('TM_cutoff') == .8 and catalog.get('min_state_size') == 50,
@@ -61,8 +63,10 @@ def checked_catalog(catalog, members):
          and all(isinstance(s, str) and SAFE_ID.fullmatch(s) and s not in ('.', '..') for s in names)
          and [row['model'] for row in members] == names, 'Original registry order/identities differ')
     need(type(construct) is int and construct >= 3
-         and catalog['canonical_positions'] == list(range(1, construct+1))
-         and HEX.fullmatch(catalog.get('sequence_sha256', '')), 'Whole-construct canonical core/sequence differs')
+         and isinstance(core, list) and len(core) >= 3
+         and all(type(p) is int and 1 <= p <= construct for p in core)
+         and core == sorted(set(core))
+         and HEX.fullmatch(catalog.get('sequence_sha256', '')), 'Canonical comparison core/construct sequence differs')
     for row in members:
         need(Path(row['source_path']).is_absolute() and HEX.fullmatch(row.get('sha256', '')),
              'Exact original source paths and hashes required')
@@ -204,12 +208,13 @@ def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
             check(); panel = state['methods'][method]; ids = [anchor_index, *panel['indices']]
             arrays, sequence, mappings = funcs['canonical_ca_arrays'](
                 [members[i]['source_path'] for i in ids], retained_positions=None, include_mapping=True)
-            construct = catalog['construct_residues']
+            construct = catalog['construct_residues']; full_order = list(range(1, construct+1))
             need(np.asarray(arrays).shape == (51, construct, 3) and np.isfinite(arrays).all()
                  and len(sequence) == construct and hashlib.sha256(sequence.encode()).hexdigest() == catalog['sequence_sha256']
                  and len(mappings) == 51, 'Canonical whole-construct correspondence differs')
             for mapping in mappings:
-                need([r['canonical_position'] for r in mapping] == catalog['canonical_positions']
+                need([r['canonical_position'] for r in mapping] == full_order
+                     and all(type(r['canonical_position']) is int for r in mapping)
                      and len({r['chain'] for r in mapping}) == 1
                      and len({(r['chain'], tuple(r['native_residue'])) for r in mapping}) == construct,
                      'Canonical/native chain and residue mapping differs')
@@ -219,7 +224,9 @@ def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
                 case = dict(canonical_positions=catalog['canonical_positions'], construct_residues=construct,
                             sequence_sha256=catalog['sequence_sha256'], chain=mapping[0]['chain'])
                 model, ca, native_mapping = funcs['read_frame'](row, case)
-                need(native_mapping == mapping, 'Native frame correspondence changed')
+                need(native_mapping == mapping
+                     and np.asarray(ca).shape == (construct, 3) and np.isfinite(ca).all()
+                     and np.array_equal(ca, arrays[number]), 'Native full-construct frame correspondence changed')
                 inventory = _identity(funcs['atom_signature'](model))
                 text, metadata, low, high = funcs['aligned_member'](row, case, arrays[0])
                 atoms, xyz = _pdb_atoms(text)
@@ -232,7 +239,9 @@ def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
                 log(f"{state['id']} {method}: full-atom member {number}/50 verified")
             folder = output/state['id']/method; folder.mkdir(parents=True)
             pdb, pse = folder/'ensemble.pdb', folder/'ensemble.pse'
-            blocks = ['REMARK 900 CANONICAL FULL-CONSTRUCT CA LEAST-SQUARES DISPLAY FIT; MEMBERSHIP USES NATIVE TM']
+            blocks = ['REMARK 900 CANONICAL COMPARISON CORE CA LEAST-SQUARES DISPLAY FIT; MEMBERSHIP USES NATIVE TM',
+                      'REMARK 900 CANONICAL CORE '+','.join(map(str, catalog['canonical_positions'])),
+                      f'REMARK 900 FULL {construct}-RESIDUE CONSTRUCT ATOMS RETAINED']
             for frame, (name, text) in enumerate(zip(panel['models'], texts), 1):
                 blocks.extend([f'MODEL     {frame:4d}', 'REMARK 900 SOURCE_MODEL '+name,
                     *[line for line in text.splitlines() if line.startswith(('ATOM  ', 'HETATM', 'TER   '))], 'ENDMDL'])
@@ -243,6 +252,7 @@ def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
                                     pymol_factory, check, funcs['privacy_check'])
             proof_path = folder/'alignment.json'
             save(proof_path, dict(anchor=state['anchor'], canonical_positions=catalog['canonical_positions'],
+                construct_residues=construct, full_construct_canonical_positions=full_order,
                 members=proofs, verification=verification, fit='Proper canonical Cα least squares; no pruning; full-atom construct retained.'))
             exported_state['methods'][method] = dict(panel, pdb=record(pdb), pse=record(pse), alignment=record(proof_path),
                 full_atom_frames=50, alignment_canonical_positions=catalog['canonical_positions'],

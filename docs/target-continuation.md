@@ -36,10 +36,16 @@ scoring, molecular export or public deployment.
 After masks are accepted, calculate the actual feature/RAM envelope and freeze
 the clustering/model-selection continuation. Reuse 5NTase projections only with
 the identical ordered feature mask; a changed mask needs new projections.
-SERCA has no completed projections. The old 5NTase metrics checkpoint has a stale
-logical digest, so do not rewrite it or claim blanket exact-match recovery.
-Bind the current independently checked scores or rebuild an explicit run-local
-metrics seed from the verified saved confidence catalog in a new successor.
+SERCA has no completed projections. All seven saved 5NTase checkpoint stages
+verify in the pinned native runtime. SQLite dump formatting differs between
+runtime versions, so metrics digests must use the runtime recorded by the run;
+a different runtime's digest is not evidence that scores changed. Preserve the
+original checkpoint identity. If the new mask is identical, bind an explicit
+feature-equivalence proof and the verified saved stages; if it differs, create
+a new scientific identity and metrics seed from verified saved confidence.
+
+Selected-state exports fit on the accepted comparison core while retaining the
+complete protein's atoms, sequence correspondence and native residue labels.
 
 Targets and large fits run serially. The old RBP state-only 16 GiB profile and
 300-second progress deadline do not apply to wide, uninterrupted estimators.

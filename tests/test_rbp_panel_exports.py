@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
 import rbp_panel_exports as adapter
 
 
-def fixture(root):
+def fixture(root, *, construct=3, core=None):
     names = [f'model-{i}' for i in range(60)]
     members = []
     for name in names:
@@ -21,8 +21,8 @@ def fixture(root):
         members.append(dict(model=name, **adapter.record(path)))
         members[-1]['source_path'] = members[-1].pop('path')
     catalog = dict(schema_version=1, kind='saved-clustering-residual-states-and-subsets',
-        models=names, target='RBP', range_id='all', construct_residues=3, canonical_positions=[1, 2, 3],
-        sequence_sha256=hashlib.sha256(b'AAA').hexdigest(), TM_cutoff=.8, min_state_size=50,
+        models=names, target='RBP', range_id='all', construct_residues=construct, canonical_positions=list(range(1, construct+1)) if core is None else core,
+        sequence_sha256=hashlib.sha256(('A'*construct).encode()).hexdigest(), TM_cutoff=.8, min_state_size=50,
         states=[dict(id='S1', anchor=names[0], supported=True, count=60, indices=list(range(60)),
             methods={method:dict(indices=list(range(start, start+50)), models=names[start:start+50])
                      for method, start in [('mcmc50', 10), ('disco50', 0)]})], unassigned_indices=[])
@@ -47,6 +47,18 @@ class CatalogTests(unittest.TestCase):
                 if kind == 'unsafe-state':state['id'] = '../escape'
                 if kind == 'partition':catalog['unassigned_indices'] = [0]
                 with self.assertRaises(ValueError):adapter.checked_catalog(catalog, members)
+
+
+    def test_trimmed_core_requires_sorted_distinct_integer_construct_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog, members = fixture(Path(tmp), construct=5, core=[2, 3, 4])
+            self.assertEqual(adapter.checked_catalog(catalog, members), list(range(60)))
+        for core in ([2, 3], [4, 3, 2], [2, 2, 4], [0, 2, 3], [2, 3, 6],
+                     [True, 2, 3], [1, 2, 3.0], [[1], 2, 3]):
+            with self.subTest(core=core), tempfile.TemporaryDirectory() as tmp:
+                catalog, members = fixture(Path(tmp), construct=5, core=core)
+                with self.assertRaisesRegex(ValueError, 'comparison core'):
+                    adapter.checked_catalog(catalog, members)
 
 
 class PyMOLAPITests(unittest.TestCase):
@@ -79,20 +91,26 @@ class MockCoordinates:
                  ('B', (' ', 0, 'A'), 'ALA', 'CA', ' ', 'C', 1., 10.),
                  ('B', (' ', 7, ' '), 'ALA', 'CA', ' ', 'C', 1., 10.),
                  ('W', ('W', 99, 'B'), 'HOH', 'O', 'A', 'O', 1., 10.)]
-    def __init__(self, bad_inventory=False, changed_source=None):
+    def __init__(self, bad_inventory=False, changed_source=None, construct=3):
         self.bad_inventory, self.changed_source, self.alignments = bad_inventory, changed_source, []
+        self.construct, self.reference_shapes = construct, []
+        self.mapping = [*self.mapping, *[dict(canonical_position=i+1, chain='B', native_residue=[' ', i+5, ' '])
+                                       for i in range(3, construct)]]
+        self.signature = [*self.signature[:-1], *[('B', (' ', i+5, ' '), 'ALA', 'CA', ' ', 'C', 1., 10.)
+                                                  for i in range(3, construct)], self.signature[-1]]
 
     def canonical(self, paths, **kwargs):
         import numpy as np
         if kwargs != dict(retained_positions=None, include_mapping=True):raise AssertionError(kwargs)
-        return np.asarray([np.arange(9).reshape(3, 3) for path in paths]), 'AAA', [self.mapping for path in paths]
+        return np.asarray([np.arange(self.construct*3).reshape(self.construct, 3) for path in paths]), 'A'*self.construct, [self.mapping for path in paths]
 
     def read_frame(self, row, case):
         import numpy as np
-        return SimpleNamespace(signature=self.signature), np.arange(9).reshape(3, 3), self.mapping
+        return SimpleNamespace(signature=self.signature), np.arange(self.construct*3).reshape(self.construct, 3), self.mapping
 
     def aligned(self, row, case, reference):
         self.alignments.append((row['model'], case))
+        self.reference_shapes.append(reference.shape)
         lines = []
         for number, (chain, residue, resn, name, alt, element, occupancy, bfactor) in enumerate(self.signature, 1):
             group = 'ATOM' if residue[0] == ' ' else 'HETATM'
@@ -148,10 +166,10 @@ class MockPyMOL:
 
 @unittest.skipUnless(AVAILABLE, 'Optional NumPy needed for mock-only coordinate adapter checks')
 class ExportTests(unittest.TestCase):
-    def execute(self, root, *, coordinates=None, bad_session=False, expected_hash=None, checkpoint=lambda _: None):
-        catalog, members = fixture(root)
+    def execute(self, root, *, coordinates=None, bad_session=False, expected_hash=None, checkpoint=lambda _: None, construct=3, core=None):
+        catalog, members = fixture(root, construct=construct, core=core)
         source = root/'saved-catalog.json'; source.write_text(json.dumps(catalog))
-        events = []; coords = coordinates or MockCoordinates()
+        events = []; coords = coordinates or MockCoordinates(construct=construct)
         result = adapter.export_catalog(source, members, root/'output',
             expected_catalog_sha256=expected_hash or adapter.record(source)['sha256'],
             pymol_factory=lambda:MockPyMOL(events, bad_session), adapters=coords.adapters(), checkpoint=checkpoint)
@@ -199,6 +217,57 @@ class ExportTests(unittest.TestCase):
             self.assertEqual(proof['members'][0]['canonical_mapping'][0]['native_residue'], [' ', 0, ' '])
             self.assertNotIn('coordinate_export_status', json.loads(source.read_text()))
             self.assertTrue(all(adapter.record(row['source_path'])['sha256'] == row['sha256'] for row in members))
+
+    def test_trimmed_core_fit_preserves_full_construct_atoms_and_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result, coords, _, members, _ = self.execute(root, construct=5, core=[2, 3, 4])
+            self.assertTrue(all(case['canonical_positions'] == [2, 3, 4]
+                                and case['construct_residues'] == 5 for _, case in coords.alignments))
+            self.assertEqual(coords.reference_shapes, [(5, 3)]*100)
+            for panel in result['states'][0]['methods'].values():
+                self.assertEqual(panel['alignment_canonical_positions'], [2, 3, 4])
+                text = Path(panel['pdb']['path']).read_text()
+                self.assertIn('CANONICAL CORE 2,3,4', text)
+                self.assertIn('FULL 5-RESIDUE CONSTRUCT ATOMS RETAINED', text)
+                self.assertEqual(len(adapter._pdb_atoms(text)[0]), 350)
+                self.assertIn(' B   0 ', text)  # Native terminal residue outside fit core.
+                self.assertIn(' B   0A', text)  # Native insertion code within fit core.
+                self.assertIn(' B   9 ', text)  # C-terminal residue outside fit core.
+                self.assertEqual(text.count('HETATM'), 50)
+                proof = json.loads(Path(panel['alignment']['path']).read_text())
+                self.assertEqual(proof['construct_residues'], 5)
+                self.assertEqual(proof['full_construct_canonical_positions'], [1, 2, 3, 4, 5])
+                self.assertTrue(all(len(row['canonical_mapping']) == 5 for row in proof['members']))
+                saved = json.loads(Path(panel['pse']['path']).read_text())
+                self.assertEqual([len(frame) for frame in saved['frames']], [7]*50)
+                self.assertTrue(all({'0', '0A', '9', '99B'} <= {a['resi'] for a in frame}
+                                    for frame in saved['frames']))
+            self.assertTrue(all(adapter.record(row['source_path'])['sha256'] == row['sha256'] for row in members))
+
+    def test_trimmed_core_never_accepts_truncated_or_reordered_construct_data(self):
+        for corruption in ('short-array', 'short-mapping', 'reordered-mapping', 'duplicate-mapping',
+                           'short-frame', 'changed-frame'):
+            with self.subTest(corruption=corruption), tempfile.TemporaryDirectory() as tmp:
+                class CorruptCoordinates(MockCoordinates):
+                    def canonical(self, paths, **kwargs):
+                        arrays, sequence, mappings = super().canonical(paths, **kwargs)
+                        mappings = [[dict(row) for row in mapping] for mapping in mappings]
+                        if corruption == 'short-array':arrays = arrays[:, 1:-1]
+                        if corruption == 'short-mapping':mappings[0] = mappings[0][1:-1]
+                        if corruption == 'reordered-mapping':mappings[0].reverse()
+                        if corruption == 'duplicate-mapping':mappings[0][2]['canonical_position'] = 2
+                        return arrays, sequence, mappings
+                    def read_frame(self, row, case):
+                        model, ca, mapping = super().read_frame(row, case)
+                        if corruption == 'short-frame':ca = ca[1:-1]
+                        if corruption == 'changed-frame':ca = ca+1
+                        return model, ca, mapping
+                root = Path(tmp)
+                with self.assertRaisesRegex(ValueError, 'correspondence|mapping'):
+                    self.execute(root, construct=5, core=[2, 3, 4],
+                                 coordinates=CorruptCoordinates(construct=5))
+                self.assertFalse((root/'output/catalog.json').exists())
 
     def test_catalog_hash_source_tamper_and_existing_outputs_stop(self):
         with tempfile.TemporaryDirectory() as tmp:
