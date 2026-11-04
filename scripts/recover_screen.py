@@ -72,7 +72,8 @@ def recover(intake_path, inventory_path, directory, output, terminal_config, dis
             verified.append(dict(model=row['model'], input_sha256=row['sha256'],
                                  distance_sha256=stored_hash))
         finally:
-            actual._mmap.close()
+            mapping = getattr(actual, '_mmap', None)
+            if mapping is not None: mapping.close()
         if digest(source) != row['sha256']:
             raise ValueError('Input changed during verification')
         if index % 50 == 0 or index == len(inventory['models']):
