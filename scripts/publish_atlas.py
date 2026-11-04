@@ -45,6 +45,16 @@ def continuous(key, name, values):
             'range': [min(finite), max(finite)] if finite else [0, 1], 'unavailable': not finite}
 
 
+def publication_scope(plan, study):
+    shown = set(plan['targets'])
+    raw_pending = plan.get('pending_targets', [])
+    pending = set(raw_pending)
+    if (not shown or len(raw_pending) != len(pending) or shown & pending
+            or shown | pending != set(study['targets'])):
+        raise ValueError('Publication must explicitly account for every target as saved or pending')
+    return list(plan['targets']), raw_pending
+
+
 def public_bonsai(tree):
     """Carry saved geometry and scientific evidence without private runtime paths."""
     result = {key: tree[key] for key in ['schema_version', 'models', 'layouts', 'method', 'scope', 'group_count']}
@@ -86,8 +96,7 @@ def build(plan_path):
             or plan['native']['sha256'] != study['snapshot']['manifest_sha256']
             or confidence['source_manifest_sha256'] != plan['native']['sha256']):
         raise ValueError('Publication requires the accepted scored snapshot and exact native confidence binding')
-    if set(plan['targets']) != set(study['targets']):
-        raise ValueError('Standard atlas requires real saved workflows for all three targets')
+    shown, pending = publication_scope(plan, study)
     output, source = Path(plan['output']), Path(plan['source'])
     if output.exists() or source.exists(): raise FileExistsError('Use new immutable publication directories')
     source.mkdir(parents=True)
@@ -101,7 +110,9 @@ def build(plan_path):
         raise ValueError('Confidence identities differ from the accepted cohort')
     rules = json.loads((Path(plan['study']['path']).parent/'model-types.json').read_text())['rules']
     method_map = {row['key']: row for row in rules}
-    atlas = {'targets': [], 'default_target': next(iter(plan['targets']))}
+    atlas = {'targets': [], 'default_target': shown[0], 'pending_targets': [
+        {'id': name, 'name': study['targets'][name]['title'], 'status': 'Analysis pending; no projections published yet.'}
+        for name in pending]}
     scopes = {'schema_version': 1, 'targets': {}}
     for target, frozen in plan['targets'].items():
         manifest = checked_json(frozen['manifest'], frozen['manifest_sha256'])
@@ -237,7 +248,7 @@ def build(plan_path):
     context_source = checked_json(context_entry['path'],context_entry['sha256'])
     context = {'schema_version':1,'verified_on':context_source['retrieved_at_utc'].split('T')[0],'targets':{}}
     for target,record in context_source['targets'].items():
-        if target not in study['targets']:continue
+        if target not in plan['targets']:continue
         start,end=record['modeled_canonical_range']
         if end-start+1!=study['targets'][target]['residues']:
             raise ValueError('Canonical construct context differs from supplied model length')
@@ -253,8 +264,12 @@ def build(plan_path):
     (source/'atlas.json').write_text(json.dumps(atlas,indent=2)+'\n')
     (source/'clustering-residues.json').write_text(json.dumps(scopes,indent=2)+'\n')
     files=[{'path':str(p.relative_to(source)),'bytes':p.stat().st_size,'sha256':sha256(p)} for p in sorted(source.rglob('*')) if p.is_file()]
+    shown_text = ', '.join(study['targets'][name]['title']+' ('+format(study['targets'][name]['models'],',')+' models)' for name in shown)
+    pending_text = ', '.join(study['targets'][name]['title'] for name in pending)
+    scope_note = 'Published now: '+shown_text+'. '+('Pending analyses, not present in the projection selector: '+pending_text+'. ' if pending else '')
+    title = 'Domenico structure atlas'+(' · '+', '.join(study['targets'][name]['title'] for name in shown)+' ready' if pending else '')
     publication={'schema_version':1,'project':'domenico-structure-atlas','renderer':'ais-explorer-v1',
-        'presentation':{'title':'Domenico structure atlas','methods':'Accepted RBP, 5NTase and SERCA snapshot. Full-construct Cα distances, default validated common cluster partition, genuine native confidence and separate saved ProteinEBM energies. Point views are exact native Cα traces; cluster representatives retain full atoms. Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'},'files':files}
+        'presentation':{'title':title,'methods':scope_note+'Accepted fixed scored snapshot. Full-construct Cα distances, default validated common cluster partition, genuine native confidence and separate saved ProteinEBM energies. Point views are exact native Cα traces; cluster representatives retain full atoms. Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'},'files':files}
     manifest=source.parent/'publication-manifest.json';manifest.write_text(json.dumps(publication,indent=2)+'\n')
     export(manifest,source,output)
     print('Canonical shared atlas prepared:',output)

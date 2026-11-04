@@ -111,6 +111,16 @@ class EndToEndPublication(unittest.TestCase):
                 self.assertEqual(runtime['implementation_sha256'],'c'*64)
                 self.assertEqual(runtime['native_modules'][0]['tracked_patch_sha256'],'f'*64)
                 self.assertEqual(data['provenance']['bonsai_native_export_sha256'],workflows[target['id']]['bonsai']['sha256'])
+            # An explicit partial release must retain the same renderer and real views.
+            partial=json.loads(plan.read_text());partial.update(targets={'TOY1':workflows['TOY1']},
+                pending_targets=['TOY2','TOY3'],source=str(root/'partial-delivery'),output=str(root/'partial-site'))
+            partial_plan=save('partial-plan.json',partial);build(partial_plan)
+            catalog=json.loads((root/'partial-site/atlas.json').read_text())
+            self.assertEqual([x['id'] for x in catalog['targets']],['TOY1'])
+            self.assertEqual([x['id'] for x in catalog['pending_targets']],['TOY2','TOY3'])
+            self.assertFalse((root/'partial-site/TOY2').exists())
+            for name in ASSETS:
+                if name != 'index.html':self.assertEqual((root/'partial-site'/name).read_bytes(),(root/'site'/name).read_bytes())
 
 
 if __name__=='__main__':unittest.main()

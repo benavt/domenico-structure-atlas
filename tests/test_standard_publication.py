@@ -47,6 +47,14 @@ class PublicationTests(unittest.TestCase):
         self.assertIn("manifest['analysis_status'] != 'complete'",publisher)
         self.assertFalse((source/'templates/screening-atlas').exists())
 
+    def test_partial_release_requires_explicit_pending_cohorts(self):
+        from publish_atlas import publication_scope
+        study={'targets':{'RBP':{},'5NT':{},'SERCA':{}}}
+        self.assertEqual(publication_scope({'targets':{'RBP':{}},'pending_targets':['5NT','SERCA']},study),(['RBP'],['5NT','SERCA']))
+        for pending in [[],['SERCA'],['5NT','SERCA','RBP'],['5NT','SERCA','SERCA']]:
+            with self.subTest(pending=pending),self.assertRaisesRegex(ValueError,'explicitly account'):
+                publication_scope({'targets':{'RBP':{}},'pending_targets':pending},study)
+
     @unittest.skipUnless(importlib.util.find_spec('numpy'), 'Native saved-array reader is optional in source CI')
     def test_missing_or_mismatched_real_projection_cohort_is_rejected(self):
         import numpy as np
