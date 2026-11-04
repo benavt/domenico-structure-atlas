@@ -268,6 +268,7 @@ def build(plan_path):
     pending_text = ', '.join(study['targets'][name]['title'] for name in pending)
     scope_note = 'Published now: '+shown_text+'. '+('Pending analyses, not present in the projection selector: '+pending_text+'. ' if pending else '')
     title = 'Domenico structure atlas'+(' · '+', '.join(study['targets'][name]['title'] for name in shown)+' ready' if pending else '')
+    title = plan.get('presentation_title', title)
     publication={'schema_version':1,'project':'domenico-structure-atlas','renderer':'ais-explorer-v1',
         'presentation':{'title':title,'methods':scope_note+'Accepted fixed scored snapshot. Full-construct Cα distances, default validated common cluster partition, genuine native confidence and separate saved ProteinEBM energies. Point views are exact native Cα traces; cluster representatives retain full atoms. Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'},'files':files}
     manifest=source.parent/'publication-manifest.json';manifest.write_text(json.dumps(publication,indent=2)+'\n')
