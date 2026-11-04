@@ -179,7 +179,24 @@ def main():
     completion = {'status': 'running', 'targets': {}, 'native_confidence_sha256': sha256(confidence),
                   'execution_plan_sha256': sha256(args.plan)}
     for target in plan['targets']:
-        if target.get('resume_manifest'):
+        preloader = None
+        if target.get('complete_manifest'):
+            manifests = verified_complete_target(plan, target)
+        elif plan.get('preload_distances_during_intake'):
+            from distance_preload import preload
+            directory = root/'distance-preload'; directory.mkdir(exist_ok=True)
+            def warm_cache(target=target):
+                try:
+                    result = preload(target, directory/(target['identifier']+'.json'))
+                    print(target['identifier']+': read-only distance cache preload complete; '+str(result['bytes_read'])+' bytes; all native checks remain required.', flush=True)
+                except BaseException as error:
+                    print('Distance preload failed: '+str(error), flush=True)
+                    os.killpg(os.getpgrp(), signal.SIGTERM)
+            preloader = threading.Thread(target=warm_cache, daemon=True)
+            preloader.start()
+        if target.get('complete_manifest'):
+            pass
+        elif target.get('resume_manifest'):
             saved = Path(target['resume_manifest'])
             if sha256(saved) != target['resume_manifest_sha256']:
                 raise ValueError('Approved interrupted manifest changed')
@@ -188,6 +205,8 @@ def main():
             manifests = [saved]
         else:
             manifests = analyze_new_target(plan, root, target, confidence, native_confidence, load_intake)
+        if preloader is not None:
+            preloader.join()
         if len(manifests) != 1:
             raise ValueError('Expected one immutable workflow manifest')
         manifest = json.loads(manifests[0].read_text())
@@ -198,6 +217,25 @@ def main():
         (root/'progress.json').write_text(json.dumps(completion, indent=2)+'\n')
     completion['status'] = 'three_target_analysis_and_camera_sessions_ready'
     (root/'analysis-completion.json').write_text(json.dumps(completion, indent=2)+'\n')
+
+
+def verified_complete_target(plan, target):
+    path = Path(target['complete_manifest'])
+    if sha256(path) != target['complete_manifest_sha256']:
+        raise ValueError('Completed target manifest changed')
+    manifest = json.loads(path.read_text())
+    if (manifest.get('analysis_status') != 'complete' or manifest.get('identifier') != target['identifier']
+            or not manifest.get('cluster_ensembles')
+            or manifest['source_identity']['commit'] != plan['sources']['library']['commit']):
+        raise ValueError('Completed target is not the approved library analysis')
+    from structure_clustering.checkpoints import RunCheckpoints
+    proof = json.loads(path.with_name('checkpoints.json').read_text())
+    checkpoints = RunCheckpoints(path.parent, proof['identity'], resume=True)
+    for stage in ['intake','metrics','summary','projection:pca','projection:umap','projection:tsne','labels']:
+        if not checkpoints.has(stage): raise ValueError('Missing completed target checkpoint: '+stage)
+        checkpoints.load(stage)
+    print(target['identifier']+': completed analysis checkpoints verified; no work or fits repeated.', flush=True)
+    return [path]
 
 
 def analyze_new_target(plan, root, target, confidence, native_confidence, load_intake):
