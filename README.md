@@ -15,6 +15,13 @@ a claim that the candidate has already been merged or released. The shared
 workflow is pinned at `external/research-workflows`; source installation and that
 private submodule require repository access. Published static results will not.
 
+Publication uses the library's canonical `ais-explorer-v1` renderer, matching the
+CASP17 and CDK2 atlas interface. `scripts/publish_atlas.py` requires complete,
+identity-matched PCA, UMAP and t-SNE outputs for all three accepted cohorts. It
+packages saved results only; it never substitutes an older cohort or fabricates
+projection coordinates. The initial screening-only site is a superseded interim
+publication, preserved in its approved release and frozen local source.
+
 ## Workflow
 
 1. Verify the accepted score manifest and every native coordinate hash. Reserve
@@ -40,6 +47,8 @@ ProteinEBM uses existing Model6 expert results. Lower **t=0.10** energy is bette
 within a target; these learned units are neither physical kcal/mol nor confidence.
 Energy coloring never substitutes for pLDDT or changes cluster memberships.
 
-No scientific result or live site is claimed until its saved outputs pass review.
+The current initial public site contains screening evidence and saved scores;
+its standard atlas replacement requires the real clustering outputs and a
+reviewed publication manifest. Existing releases remain reproducible in Git history.
 
 Run source-only checks with `python3 -m unittest discover -s tests`.
