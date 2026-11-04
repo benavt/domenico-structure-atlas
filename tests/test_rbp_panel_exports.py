@@ -128,14 +128,32 @@ class MockPyMOL:
 
 @unittest.skipUnless(AVAILABLE, 'Optional NumPy needed for mock-only coordinate adapter checks')
 class ExportTests(unittest.TestCase):
-    def execute(self, root, *, coordinates=None, bad_session=False, expected_hash=None):
+    def execute(self, root, *, coordinates=None, bad_session=False, expected_hash=None, checkpoint=lambda _: None):
         catalog, members = fixture(root)
         source = root/'saved-catalog.json'; source.write_text(json.dumps(catalog))
         events = []; coords = coordinates or MockCoordinates()
         result = adapter.export_catalog(source, members, root/'output',
             expected_catalog_sha256=expected_hash or adapter.record(source)['sha256'],
-            pymol_factory=lambda:MockPyMOL(events, bad_session), adapters=coords.adapters())
+            pymol_factory=lambda:MockPyMOL(events, bad_session), adapters=coords.adapters(), checkpoint=checkpoint)
         return result, coords, events, members, source
+
+    def test_backoff_boundary_follows_verified_files_and_precedes_next_panel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calls = []
+            def stop_at_first_panel(identifier):
+                calls.append(identifier)
+                folder = root/'output/S1/mcmc50'
+                self.assertEqual(identifier,'panel-written:S1:mcmc50')
+                self.assertEqual(len(adapter._pdb_atoms((folder/'ensemble.pdb').read_text())[0]),250)
+                self.assertEqual(json.loads((folder/'alignment.json').read_text())['verification']['states'],50)
+                self.assertTrue((folder/'ensemble.pse').is_file())
+                raise RuntimeError('cooperative stop at completed panel')
+            with self.assertRaisesRegex(RuntimeError,'cooperative stop'):
+                self.execute(root,checkpoint=stop_at_first_panel)
+            self.assertEqual(len(calls),1)
+            self.assertFalse((root/'output/S1/disco50').exists())
+            self.assertFalse((root/'output/catalog.json').exists())
 
     def test_saved50_full_atoms_native_zero_insertion_and_paths_survive(self):
         with tempfile.TemporaryDirectory() as tmp:

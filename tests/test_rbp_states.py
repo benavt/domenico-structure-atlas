@@ -71,6 +71,45 @@ class MockedProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'before scoring'): oracle([(2, 3)])
             self.assertEqual(scorer.directional_calls, 2)
 
+    def test_native_oracle_routes_new_pairs_through_bounded_bulk_owner(self):
+        from rbp_states import NativePairOracle
+        cohort,_=self.cohort();names=cohort['models'];scorer=self.scorer(names);single=scorer.score;seen=[]
+        def many(pairs,*,workers):
+            seen.append((pairs,workers));return [single(*pair) for pair in pairs]
+        scorer.score_many=many
+        def forbidden(*args):raise AssertionError('Bulk native owner must control wave commits')
+        scorer.score=forbidden
+        with tempfile.TemporaryDirectory() as tmp:
+            oracle=NativePairOracle(names,scorer,[0,2],'a'*64,Path(tmp)/'waves',lambda:None,workers=4)
+            self.assertEqual(oracle([(1,0),(0,1),(0,0),(2,0)]),[.9,.9,1.,.9])
+            self.assertEqual(seen,[([('m0','m1'),('m0','m2')],4)])
+            self.assertEqual(scorer.directional_calls,4)
+
+    def test_native_oracle_releases_rich_proofs_between_ordered_25_pair_chunks(self):
+        import weakref
+        from rbp_states import NativePairOracle
+        cohort,_=self.cohort();names=cohort['models'];scorer=self.scorer(names);single=scorer.score
+        requests=[(i,0) for i in reversed(range(1,len(names)))]+[(0,1),(1,0),(0,0)]
+        seen,previous=[],[]
+        class Proof(dict):pass
+        def many(pairs,*,workers):
+            self.assertTrue(all(ref() is None for ref in previous), 'Prior rich proofs survived into another wave')
+            seen.append((list(pairs),workers));results=[Proof(single(*pair)) for pair in pairs]
+            previous[:]=[weakref.ref(result) for result in results]
+            return results
+        scorer.score_many=many
+        with tempfile.TemporaryDirectory() as tmp:
+            oracle=NativePairOracle(names,scorer,[0,2],'a'*64,Path(tmp)/'grouped',lambda:None,workers=4)
+            baseline_scorer=self.scorer(names)
+            baseline=NativePairOracle(names,baseline_scorer,[0,2],'a'*64,Path(tmp)/'baseline',lambda:None,workers=4)
+            self.assertEqual(oracle(requests),baseline(requests))
+            self.assertEqual([len(pairs) for pairs,_ in seen],[25,25,9])
+            self.assertEqual([pair for pairs,_ in seen for pair in pairs],[('m0',f'm{i}') for i in range(1,len(names))])
+            self.assertTrue(all(workers==4 for _,workers in seen))
+            self.assertTrue(all(ref() is None for ref in previous))
+            self.assertEqual(scorer.directional_calls,baseline_scorer.directional_calls)
+            self.assertEqual(scorer.directional_calls,2*(len(names)-1))
+
     def adapters(self, observed, invalid_panel=False):
         def search(names, features, groups, previous, cached, oracle, settings):
             self.assertEqual((previous, cached), ([], {}))
@@ -125,6 +164,41 @@ class MockedProtocolTests(unittest.TestCase):
             self.assertIn('60-model', summary['prior_scope'])
             self.assertNotIn('11000', json.dumps(catalog))
             self.assertEqual(len(list((output/'geometry-checkpoints').glob('column-*.npz'))), 1)
+
+    def test_phase_checkpoint_sees_completed_geometry_or_sampling_writes_before_stopping(self):
+        import json
+        from rbp_states import run_states
+        for stopped_phase in ['tm-state-geometry', 'tm-state-sampling']:
+            with self.subTest(stopped_phase=stopped_phase), tempfile.TemporaryDirectory() as tmp:
+                cohort, clustering = self.cohort()
+                observed, checkpoints = {}, []
+                output = Path(tmp)/'states'
+                def checkpoint(checkpoint_id):
+                    checkpoints.append(checkpoint_id)
+                    for name in ['pair-audit.json', 'search.json', 'membership.json', 'pair-query-ledger.json']:
+                        self.assertIsInstance(json.loads((output/name).read_text()), dict)
+                    with np.load(output/'scores.npz', allow_pickle=False) as saved:
+                        self.assertEqual(saved['model_to_anchor'].shape, (60, 1))
+                    if checkpoint_id.startswith('tm-state-sampling:'):
+                        summary = json.loads((output/'sampling/S1/summary.json').read_text())
+                        self.assertEqual(summary['status'], 'complete')
+                        self.assertEqual(summary['production_chain'], 0)
+                        with np.load(summary['arrays']['path'], allow_pickle=False) as saved:
+                            np.testing.assert_array_equal(saved['production_indices'], np.arange(10, 60))
+                    if checkpoint_id.startswith(stopped_phase+':'):
+                        raise RuntimeError('mock stop at saved phase boundary')
+                with self.assertRaisesRegex(RuntimeError, 'saved phase boundary'):
+                    run_states(cohort, clustering, np.zeros((60, 1), dtype=np.float32), [0, 2], output,
+                        self.scorer(cohort['models']), source_bindings=dict(plan_sha256='c'*64), seed=7,
+                        adapters=self.adapters(observed), checkpoint=checkpoint)
+                self.assertTrue(checkpoints[0].startswith('tm-state-geometry:'))
+                self.assertFalse((output/'catalog.json').exists())
+                if stopped_phase == 'tm-state-geometry':
+                    self.assertEqual(len(checkpoints), 1)
+                    self.assertNotIn('chains_kwargs', observed)
+                else:
+                    self.assertEqual(checkpoints[1], 'tm-state-sampling:S1')
+                    self.assertEqual(observed['chains_kwargs']['seed'], 7)
 
     def test_prior_keeps_full_cohort_cluster_sizes_before_state_conditioning(self):
         from rbp_states import run_states

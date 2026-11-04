@@ -121,8 +121,23 @@ class NativePairOracle:
         def one(pair):
             self.check()
             return pair, self._value(pair, self.scorer.score(self.names[pair[0]], self.names[pair[1]]))
-        with ThreadPoolExecutor(max_workers=self.workers) as pool:
-            for pair, value in pool.map(one, missing): self.memo[pair] = value
+        if callable(getattr(self.scorer, 'score_many', None)):
+            # The native owner commits bounded intent waves before launching any
+            # calls and returns only after each atomic evidence barrier completes.
+            for offset in range(0, len(missing), 25):
+                chunk = missing[offset:offset+25]
+                self.check()
+                calls_before_chunk = self.scorer.directional_calls
+                results = self.scorer.score_many([(self.names[i], self.names[j]) for i, j in chunk], workers=self.workers)
+                need(len(results) == len(chunk), 'Native wave result count differs')
+                self.memo.update((pair, self._value(pair, result)) for pair, result in zip(chunk, results))
+                del results  # Release rich native proofs before the next bounded wave.
+                need(self.scorer.directional_calls <= self.limit
+                     and self.scorer.directional_calls-calls_before_chunk <= 2*len(chunk), 'Native call ceiling exceeded')
+                self.check()
+        else:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                for pair, value in pool.map(one, missing): self.memo[pair] = value
         after = self.scorer.directional_calls
         need(after <= self.limit and after-before <= 2*len(missing), 'Native call ceiling exceeded')
         touched = sorted({i for pair in missing for i in pair})
@@ -199,7 +214,7 @@ def _sampling(cohort, clustering, indices, ordinal, core, prior, tau, output, se
 
 
 def run_states(cohort, clustering, features, retained_core_indices, output, scorer, *,
-               source_bindings, seed, workers=1, check=lambda: None, adapters=None):
+               source_bindings, seed, workers=1, check=lambda: None, adapters=None, checkpoint=lambda _: None):
     """Produce index-only state catalog inside an approved guarded outer runner.
 
     ``cohort``: target, range_id, models, methods, energies, sequence_sha256,
@@ -219,6 +234,7 @@ def run_states(cohort, clustering, features, retained_core_indices, output, scor
     from src.analysis.tm_state_geometry import assign_membership
     from src.analysis.tm_state_subset import run_subset_chains, disco_subset
     adapters = {} if adapters is None else dict(adapters)
+    need(callable(checkpoint), 'Checkpoint callback must be callable')
     names = list(cohort['models']); n = len(names); core = list(retained_core_indices)
     cols = core_feature_indices(cohort['construct_residues'], core)
     need(n >= 50 and len(set(names)) == n and all(isinstance(s, str) and s for s in names), 'Unique model identities required')
@@ -283,6 +299,7 @@ def run_states(cohort, clustering, features, retained_core_indices, output, scor
     search = dict(search, kind='bounded-actual-residual-TM080-geometry', target=cohort['target'])
     save(output/'search.json', search); save(output/'membership.json', assignment)
     save(output/'pair-query-ledger.json', dict(events=oracle.events, native_directional_calls=scorer.directional_calls))
+    checkpoint(f'tm-state-geometry:{len(anchors)}:{scorer.directional_calls}')
     states = []; proposals = 0
     for ordinal, state in enumerate(assignment['states']):
         sample = _sampling(cohort, clustering, state['indices'], ordinal, core, prior, tau,
@@ -290,6 +307,7 @@ def run_states(cohort, clustering, features, retained_core_indices, output, scor
             adapters.get('run_subset_chains', run_subset_chains), adapters.get('disco_subset', disco_subset))
         proposals += sample.pop('mh_proposals'); need(proposals <= 120000, 'MH proposal envelope exceeded')
         states.append(dict(state, minimum_member_tm=float(scores[state['indices'], ordinal].min()), **sample))
+        checkpoint('tm-state-sampling:'+state['id'])
     catalog = dict(schema_version=1, kind='saved-clustering-residual-states-and-subsets',
         target=cohort['target'], range_id=cohort['range_id'], models=names, methods=cohort['methods'],
         canonical_positions=[i+1 for i in core], clustering_positions=clustering['clustering_positions'],

@@ -110,7 +110,7 @@ def frozen_features(entry, manifest, names, scratch):
             yield staged, feature_sha256(staged)
 
 
-def registry(plan, manifest, study, check):
+def registry(plan, manifest, study, check, checkpoint=lambda _: None):
     from publish_atlas import projections
     intake = read_bound(plan['intake']); native = read_bound(plan['native'])
     need(native['status'] == 'validated' and plan['native']['sha256'] == study['snapshot']['manifest_sha256'],
@@ -132,7 +132,9 @@ def registry(plan, manifest, study, check):
              'Coordinate/score/primary identity binding differs: '+name)
         members.append(dict(model=name, source_path=source['path'], sha256=source['sha256'],
                             method=rows[name]['method'], energy=rows[name]['energy_t010']))
-        if (index+1)%500 == 0: print(f'RBP: verified {index+1}/{len(names)} originals', flush=True)
+        if (index+1)%500 == 0:
+            print(f'RBP: verified {index+1}/{len(names)} originals', flush=True)
+            checkpoint(f'original-hashes:{index+1}')
     return names, members, [by_label[name] for name in names]
 
 

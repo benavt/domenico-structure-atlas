@@ -1,5 +1,7 @@
 """Execute one explicitly approved private plan with source and resource checks."""
 import argparse
+import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,6 +17,10 @@ def control_group():
 
 
 def verify_controls(group, resources):
+    if 'required_uid' in resources:
+        required_uid = resources['required_uid']
+        if type(required_uid) is not int or required_uid <= 0 or os.getuid() != required_uid:
+            raise ValueError('Required unprivileged job UID differs')
     if (group/'memory.max').read_text().strip() != str(resources['maximum_memory_bytes']):
         raise ValueError('Required memory cap is absent')
     if (group/'memory.swap.max').read_text().strip() != '0':
@@ -22,6 +28,36 @@ def verify_controls(group, resources):
     quota, period = (group/'cpu.max').read_text().split()
     if quota == 'max' or int(quota)/int(period) > resources['maximum_cpus']:
         raise ValueError('Required CPU quota is absent')
+
+
+
+def reviewed_guard(plan):
+    """Load only an explicitly frozen guard; keep scientific module paths intact."""
+    entry = plan.get('runtime_guard')
+    if entry is None:
+        if plan.get('guard', {}).get('io_recovery'):
+            raise ValueError('Cooperative I/O requires its separately reviewed guard')
+        return importlib.import_module('structure_clustering.resource_guard')
+    checkout = Path(plan['sources']['guard']['checkout']).absolute()
+    expected = checkout/'structure_clustering'/'resource_guard.py'
+    path = Path(entry['path']).absolute()
+    if (path != expected or not path.is_file()
+            or any(part.is_symlink() for part in [path, *path.parents])
+            or path.stat().st_size != entry['bytes'] or sha256(path) != entry['sha256']
+            or plan['frozen_files'].get(str(path)) != entry['sha256']):
+        raise ValueError('Reviewed resource guard binding changed')
+    name = '_atlas_reviewed_resource_guard_'+entry['sha256']
+    if name in sys.modules:
+        return sys.modules[name]
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[name] = module
+    try:
+        specification.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
 
 
 def main():
@@ -43,7 +79,10 @@ def main():
     os.environ.update(plan['environment'])
     sys.path.insert(0,plan['sources']['library']['checkout'])
     from structure_clustering.run_records import runtime_identity
-    from structure_clustering.resource_guard import ResourceLimits, run_guarded
+    guard = reviewed_guard(plan)
+    guard_options = {}
+    if plan.get('guard', {}).get('io_recovery'):
+        guard_options['io_recovery'] = guard.IORecoveryPolicy(**plan['guard']['io_recovery'])
     if runtime_identity() != json.loads(Path(plan['runtime_fingerprint']).read_text()):
         raise ValueError('Runtime changed')
     if json.loads(Path(plan['validation_receipt']).read_text()).get('status') != 'validated':
@@ -62,9 +101,10 @@ def main():
     with lease.open('x') as stream:
         json.dump(dict(project=plan['project'],bytes=plan['resources']['additional_storage_bytes'],plan_sha256=sha256(path)),stream)
     try:
-        code = run_guarded(plan['command'],run/'control',admission=ResourceLimits(**plan['guard']['admission']),
-                           runtime=ResourceLimits(**plan['guard']['runtime']),interval_seconds=5,
-                           maximum_wall_seconds=plan['resources']['maximum_wall_seconds'],consecutive_failures=3)
+        code = guard.run_guarded(plan['command'],run/'control',admission=guard.ResourceLimits(**plan['guard']['admission']),
+                           runtime=guard.ResourceLimits(**plan['guard']['runtime']),interval_seconds=5,
+                           maximum_wall_seconds=plan['resources']['maximum_wall_seconds'],consecutive_failures=3,
+                           **guard_options)
         if code: raise RuntimeError('Approved stage failed; preserve logs and review before any retry')
         if 'expected_result' in plan:
             output = Path(plan['expected_result'])

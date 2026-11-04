@@ -161,7 +161,8 @@ def _session(pdb_text, expected, coordinates, names, path, color, factory, check
 
 
 def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
-                   pymol_factory=None, adapters=None, check=lambda: None, log=lambda _: None):
+                   pymol_factory=None, adapters=None, check=lambda: None, log=lambda _: None,
+                   checkpoint=lambda _: None):
     """Export saved50 panels only; this scientific export needs exact plan approval.
 
     ``members`` is the complete ordered original registry: model/source_path/sha256.
@@ -238,6 +239,7 @@ def export_catalog(catalog_path, members, output, *, expected_catalog_sha256,
             exported_state['methods'][method] = dict(panel, pdb=record(pdb), pse=record(pse), alignment=record(proof_path),
                 full_atom_frames=50, alignment_canonical_positions=catalog['canonical_positions'],
                 camera_status='preparatory session; final camera-dependent rendering requires review')
+            checkpoint(f'panel-written:{state["id"]}:{method}')
         result['states'].append(exported_state)
     need(record(source['path']) == source and all(record(members[i]['source_path']) == source_records[i] for i in selected),
          'Frozen state catalog or original coordinates changed during export')
