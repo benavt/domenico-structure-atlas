@@ -52,6 +52,32 @@ def validate(plan, root):
     return receipt
 
 
+def preflight_axes(plan, root):
+    """Audit one accepted input per method before parsing the whole cohorts."""
+    from src.analysis.half_matrix import DISTOGRAM_MANIFEST_FILENAME
+    from src.analysis.distogram_selection_metadata import DISTOGRAM_SELECTION_METADATA_FILENAME
+    from src.analysis.residue_region import validate_reused_ca_distograms
+    natives = {r['model_id']: r for r in json.loads(Path(plan['native_manifest']).read_text())['models']}
+    output = root/'axis-preflight'; output.mkdir()
+    for target in plan['targets']:
+        intake=json.loads(Path(target['intake']).read_text())
+        screening=json.loads(Path(target['screening']).read_text())
+        directory=Path(screening['distogram_dir']);selected={}
+        for row in intake['models']:
+            selected.setdefault(natives[row['model_id']]['method'],row)
+        stage=output/target['identifier'];stage.mkdir()
+        for name in [DISTOGRAM_MANIFEST_FILENAME,DISTOGRAM_SELECTION_METADATA_FILENAME]:
+            shutil.copyfile(directory/name,stage/name)
+        structures=[]
+        for row in selected.values():
+            if sha256(row['path'])!=row['sha256']:
+                raise ValueError('Axis preflight native coordinates changed')
+            name=row['model_id'];shutil.copyfile(directory/(name+'.bin'),stage/(name+'.bin'))
+            structures.append({'basename':name,'path':row['path']})
+        validate_reused_ca_distograms(stage,structures,log=lambda message:print(target['identifier']+': '+message,flush=True))
+    (output/'complete.json').write_text(json.dumps({'status':'validated','models':sum(1 for _ in output.glob('*/*.bin'))},indent=2)+'\n')
+
+
 def collect_confidence(plan, root):
     """Read/hash native metadata in one bounded remote stdlib process."""
     remote = plan['native_confidence']
@@ -134,6 +160,7 @@ def main():
         print('Reusing explicit hash-verified native validation; no fixture projection fits.', flush=True)
     else:
         validate(plan, root)
+    preflight_axes(plan, root)
     if plan.get('verified_confidence'):
         entry = plan['verified_confidence']; confidence = Path(entry['path'])
         if sha256(confidence) != entry['sha256']:
