@@ -48,7 +48,11 @@ def continuous(key, name, values):
 def build(plan_path):
     from native_ca import write_ca
     from structure_clustering.publication import export
+    from src.analysis.atlas_presentation import renderer_identity
     plan = json.loads(Path(plan_path).read_text())
+    renderer = renderer_identity()
+    if renderer['revision'] != plan['renderer_commit'] or renderer['uncommitted_source'] is not False:
+        raise ValueError('Publication renderer differs from its exact reviewed source')
     study = checked_json(plan['study']['path'], plan['study']['sha256'])
     native = checked_json(plan['native']['path'], plan['native']['sha256'])
     confidence = checked_json(plan['confidence']['path'], plan['confidence']['sha256'])
@@ -102,10 +106,25 @@ def build(plan_path):
             selected = group['selected'][0]; name = selected['model']; original = Path(selected['source_path'])
             if name not in expected or sha256(original) != expected[name]['sha256']: raise ValueError('Representative changed')
             destination = folder/'representatives'/original.name; shutil.copyfile(original, destination)
-            representatives.append({'cluster': group['cluster_label'], 'count': group['cluster_size'], 'model': name,
+            representative = {'cluster': group['cluster_label'], 'count': group['cluster_size'], 'model': name,
                 'method': method_map[expected[name]['method']]['name'], 'color': group['color'],
                 'file': str(destination.relative_to(source)), 'format': 'cif' if original.suffix.lower() in ['.cif','.mmcif'] else 'pdb',
-                'sha256': expected[name]['sha256'], 'structure_confidence': None})
+                'sha256': expected[name]['sha256'], 'structure_confidence': None}
+            ensemble = Path(group['multimodel_structure'])
+            ensemble_destination = folder/'representatives'/ensemble.name
+            shutil.copyfile(ensemble, ensemble_destination)
+            representative.update(ensemble_file=str(ensemble_destination.relative_to(source)),
+                ensemble_format='cif', ensemble_structure_confidence=None)
+            metadata = {'cluster':group['cluster_label'], 'ensemble_sha256':sha256(ensemble),
+                'alignment_ca_keys':group.get('alignment_ca_keys',group['shared_ca_keys']),
+                'selection_method':group['selection_method'], 'confidence_metric':report['confidence_metric'],
+                'states':[{'model':r['model'],'state':r['state'],'rank':r['rank'],'confidence':r['confidence'],
+                           'aligned_ca_rmsd':r['aligned_ca_rmsd'],'native_sha256':expected[r['model']]['sha256'],
+                           'ca_correspondence':r.get('ca_correspondence')} for r in group['selected']]}
+            metadata_file=ensemble_destination.with_suffix('.json')
+            metadata_file.write_text(json.dumps(metadata,indent=2)+'\n')
+            representative['ensemble_metadata']={'file':str(metadata_file.relative_to(source))}
+            representatives.append(representative)
         cluster_values = [labels[name]['cluster_label'] for name in names]
         colors = {row['cluster_label']: row['color'] for row in members}
         method_names = [method_map[expected[name]['method']]['name'] for name in names]
@@ -124,23 +143,57 @@ def build(plan_path):
             for name in names:
                 row,score=expected[name],by_confidence[name]
                 writer.writerow([name,row['method'],labels[name]['cluster_label'],row['native_physicality'],row['sha256'],score['mean_plddt'],score['ptm'],*[row[f'energy_t{i:02d}'] for i in range(16)]])
+        archive = frozen.get('original_archive')
+        if (not archive or archive['models'] != len(names) or not str(archive['url']).startswith('https://')
+                or sha256(archive['file']) != archive['sha256']):
+            raise ValueError('A verified complete original archive is required for each compact target view')
+        public_archive = {key:archive[key] for key in ['url','sha256','bytes','models']}
         detection = manifest['terminal_detection']; count = study['targets'][target]['residues']
         data = {'target':target,'view_id':'whole','view_title':study['targets'][target]['title']+' · validated default clustering',
             'models':names,'residues':count,'methods':method_names,'clusters':cluster_values,'projections':xy,'schemes':schemes,
             'representatives':representatives,'views':[{'id':'whole','name':'Validated UMAP clusters','data':target+'/primary.json'}],
             'membership_file':str(membership.relative_to(source)),'heatmaps':[], 'model_files':model_files,'model_sha256':display_hashes,
             'model_native_sha256':native_hashes,'model_representation':'ca_trace','model_structure_confidence':[None]*len(names),
-            'model_physicality':flags,'representative_kind':'confidence-ranked representative or unscored structural medoid',
+            'model_physicality':flags,'original_archive':public_archive,'representative_kind':'confidence-ranked representative or unscored structural medoid',
             'representative_policy':'Highest genuine native confidence among the default selected ensemble; unscored clusters use the recorded structural medoid. Energy is not confidence.',
             'mask_note':f'All {count} supplied construct residues retained; native numbering preserved. Biological disorder is not inferred.',
             'clustering_method_note':'Default seed42 PCA/UMAP/t-SNE; common component-preserving UMAP partition, feature silhouette ≥0.15 and repeat-seed ARI ≥0.80. All three projections retain the exact same model order and memberships.',
             'provenance':{'workflow_manifest_sha256':frozen['manifest_sha256'],'native_manifest_sha256':plan['native']['sha256'],
                 'sequence_sha256':study['targets'][target]['sequence_sha256'],'pair_mask_sha256':detection['pair_mask_sha256'],
-                'confidence_sha256':plan['confidence']['sha256'],'scientific_library_commit':study['library_commit'],
+                'confidence_sha256':plan['confidence']['sha256'],'scientific_library_commit':study['library_commit'],'renderer_commit':plan['renderer_commit'],
                 'energy_units':'learned arbitrary units; lower within target; not confidence or calibrated free energy'}}
         for image in manifest['visualize_distogram']['images']:
             path=Path(image);destination=folder/'figures'/path.name;destination.parent.mkdir(exist_ok=True);shutil.copyfile(path,destination)
             data['heatmaps'].append({'name':path.stem.replace('_',' ').capitalize(),'file':str(destination.relative_to(source))})
+        if frozen.get('reports'):
+            data['report_downloads']=[]
+            for artifact in frozen['reports']:
+                if artifact['models']!=len(names) or sha256(artifact['file'])!=artifact['sha256']:
+                    raise ValueError('Report artifact does not match the published cohort')
+                data['report_downloads'].append({key:artifact[key] for key in ['label','url','sha256','models']})
+        if frozen.get('medoid_tm'):
+            entry=frozen['medoid_tm'];grid=checked_json(entry['path'],entry['sha256'])
+            matrix=grid['matrix'];grid_labels=grid['labels']
+            if (set(grid_labels)!=set(cluster_values) or len(matrix)!=len(grid_labels)
+                    or any(len(row)!=len(grid_labels) for row in matrix)
+                    or any(not isinstance(v,(int,float)) or not math.isfinite(v) or not 0<=v<=1 for row in matrix for v in row)
+                    or any(matrix[i][j]!=matrix[j][i] for i in range(len(matrix)) for j in range(len(matrix)))):
+                raise ValueError('Saved medoid TM grid differs from published cluster identities')
+            csv_file=folder/'medoid-tm.csv'
+            with csv_file.open('x',newline='') as stream:
+                writer=csv.writer(stream);writer.writerow(['cluster',*grid_labels])
+                for label,row in zip(grid_labels,matrix):writer.writerow([label,*row])
+            data['medoid_tm']={'labels':grid_labels,'matrix':matrix,'csv':str(csv_file.relative_to(source)),
+                'title':'TM similarity across selected-ensemble medoids',
+                'note':'Exact saved bidirectional, average-length-normalized US-align scores. Selected-ensemble medoids are distinct from full-cluster medoids.'}
+        if frozen.get('bonsai'):
+            entry=frozen['bonsai'];tree=checked_json(entry['path'],entry['sha256'])
+            tree_names=[row['model'] for row in tree['models']]
+            if len(set(tree_names))!=len(tree_names) or not set(tree_names).issubset(names):
+                raise ValueError('Saved Bonsai contains different model identities')
+            tree_file=folder/'bonsai.json';shutil.copyfile(entry['path'],tree_file)
+            data['bonsai']={'file':str(tree_file.relative_to(source)),'sha256':entry['sha256'],'selected_models':len(tree_names)}
+            data['provenance']['bonsai_scope']='Only the default displayed confidence-selected ensembles; native saved tree, not a whole-cohort tree.'
         scope={'chain':'A','sequence_sha256':study['targets'][target]['sequence_sha256'],'expected_ca_count':count,
                'canonical_positions':[index+1 for index in detection['retained_reference_positions']],
                'analysis_uses_full_construct':not detection['excluded_indices'],'regions_verified':False,'reference_ranges':f'construct positions 1–{count}'}
