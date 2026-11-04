@@ -53,6 +53,10 @@ def build(plan_path):
     renderer = renderer_identity()
     if renderer['revision'] != plan['renderer_commit'] or renderer['uncommitted_source'] is not False:
         raise ValueError('Publication renderer differs from its exact reviewed source')
+    for path, digest in plan.get('frozen_files', {}).items():
+        if sha256(path) != digest: raise ValueError('Selected publication input changed')
+    if set(plan['vendor_assets']) != {'plotly.min.js','3Dmol-min.js'}:
+        raise ValueError('Canonical atlas requires the two selected vendor assets')
     study = checked_json(plan['study']['path'], plan['study']['sha256'])
     native = checked_json(plan['native']['path'], plan['native']['sha256'])
     confidence = checked_json(plan['confidence']['path'], plan['confidence']['sha256'])
@@ -147,6 +151,11 @@ def build(plan_path):
         if (not archive or archive['models'] != len(names) or not str(archive['url']).startswith('https://')
                 or sha256(archive['file']) != archive['sha256']):
             raise ValueError('A verified complete original archive is required for each compact target view')
+        inventory = checked_json(archive['inventory'],archive['inventory_sha256'])
+        if (inventory['native_manifest_sha256']!=plan['native']['sha256']
+                or len(inventory['models'])!=len(expected)
+                or {row['model']:row['sha256'] for row in inventory['models']}!={name:row['sha256'] for name,row in expected.items()}):
+            raise ValueError('Original archive inventory differs from accepted native coordinates')
         public_archive = {key:archive[key] for key in ['url','sha256','bytes','models']}
         detection = manifest['terminal_detection']; count = study['targets'][target]['residues']
         data = {'target':target,'view_id':'whole','view_title':study['targets'][target]['title']+' · validated default clustering',
@@ -196,10 +205,27 @@ def build(plan_path):
             data['provenance']['bonsai_scope']='Only the default displayed confidence-selected ensembles; native saved tree, not a whole-cohort tree.'
         scope={'chain':'A','sequence_sha256':study['targets'][target]['sequence_sha256'],'expected_ca_count':count,
                'canonical_positions':[index+1 for index in detection['retained_reference_positions']],
-               'analysis_uses_full_construct':not detection['excluded_indices'],'regions_verified':False,'reference_ranges':f'construct positions 1–{count}'}
+               'analysis_uses_full_construct':not detection['excluded_indices'],'note':'Canonical positions here index the supplied construct, not full-length UniProt; native file labels are preserved.','regions_verified':False,'reference_ranges':f'construct positions 1–{count}'}
         scopes['targets'][target]={'views':{'whole':scope}}
         (folder/'primary.json').write_text(json.dumps(data,separators=(',',':'),allow_nan=False)+'\n')
         atlas['targets'].append({'id':target,'name':study['targets'][target]['title'],'data':target+'/primary.json'})
+    context_entry = plan['construct_context']
+    context_source = checked_json(context_entry['path'],context_entry['sha256'])
+    context = {'schema_version':1,'verified_on':context_source['retrieved_at_utc'].split('T')[0],'targets':{}}
+    for target,record in context_source['targets'].items():
+        if target not in study['targets']:continue
+        start,end=record['modeled_canonical_range']
+        if end-start+1!=study['targets'][target]['residues']:
+            raise ValueError('Canonical construct context differs from supplied model length')
+        context['targets'][target]={'title':study['targets'][target]['title']+' · '+record['protein'],
+            'organism':record['organism'],
+            'record_summary':f'Supplied construct: UniProt residues {start}–{end} of {record["canonical_length"]}. Atlas residue positions index the supplied construct; native file labels remain intact.',
+            'provenance':{'analysis_sequence_sha256':study['targets'][target]['sequence_sha256']},
+            'references':[{'label':'UniProt reference sequence and annotation','url':record['source']}],
+            'project_writeup':{'status':'Accepted model snapshot; exploratory clustering',
+                'biological_relevance':None,'ensemble_interpretation':'Cluster populations describe generated models, not equilibrium state probabilities. Conservative screening retained every supplied construct residue; this does not establish biological order.',
+                'project_citations':[],'project_record_url':'https://github.com/benavt/domenico-structure-atlas'}}
+    (source/'target-context.json').write_text(json.dumps(context,indent=2)+'\n')
     (source/'atlas.json').write_text(json.dumps(atlas,indent=2)+'\n')
     (source/'clustering-residues.json').write_text(json.dumps(scopes,indent=2)+'\n')
     files=[{'path':str(p.relative_to(source)),'bytes':p.stat().st_size,'sha256':sha256(p)} for p in sorted(source.rglob('*')) if p.is_file()]

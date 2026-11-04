@@ -23,7 +23,7 @@ def ca_rows(path):
     names = data['_atom_site.label_atom_id']; count = len(names)
     def column(*keys, default=None):
         return next((data['_atom_site.'+key] for key in keys if '_atom_site.'+key in data), [default]*count)
-    columns = [column('auth_comp_id', 'label_comp_id'), column('auth_asym_id', 'label_asym_id'),
+    columns = [column('label_comp_id', 'auth_comp_id'), column('auth_asym_id', 'label_asym_id'),
                column('auth_seq_id', 'label_seq_id'), column('pdbx_PDB_ins_code', default='?'),
                column('label_alt_id', default='.'), column('Cartn_x'), column('Cartn_y'), column('Cartn_z'),
                column('occupancy', default='1'), column('B_iso_or_equiv', default='0')]

@@ -4,7 +4,6 @@ Requires a frozen approved export plan. No coordinates or scientific values are
 changed. These archives are separate from the size-limited GitHub Pages site.
 """
 import argparse
-import csv
 import gzip
 import hashlib
 import io
@@ -47,6 +46,18 @@ def package(plan_path):
                     tar.addfile(member,io.BytesIO(data));inventory.append({'model':row['model_id'],'file':target+'/'+name,'bytes':len(data),'sha256':digest})
                     if index%500==0:print(f'{target}: archived {index}/{len(rows)} exact originals',flush=True)
         if archive.stat().st_size>=2_000_000_000:raise ValueError('Original archive exceeds the selected release-asset budget')
+        expected_members={row['file']:row for row in inventory};seen=set()
+        with tarfile.open(archive,'r|gz') as tar:
+            for member in tar:
+                if not member.isfile() or member.name not in expected_members or member.name in seen:
+                    raise ValueError('Original archive member identity differs')
+                recorded=expected_members[member.name]
+                with tar.extractfile(member) as stream:
+                    digest=hashlib.file_digest(stream,'sha256').hexdigest()
+                if member.size!=recorded['bytes'] or digest!=recorded['sha256']:
+                    raise ValueError('Original archive round-trip changed native bytes')
+                seen.add(member.name)
+        if seen!=set(expected_members):raise ValueError('Original archive is incomplete')
         inventory_file=output/(target+'-originals-manifest.json')
         inventory_file.write_text(json.dumps({'target':target,'models':inventory,'native_manifest_sha256':plan['native_manifest_sha256']},indent=2)+'\n')
         result['targets'][target]={'url':plan['release_url'].rstrip('/')+'/'+archive.name,'sha256':sha256(archive),
