@@ -25,11 +25,24 @@ def need(value, message):
     if not value:raise ValueError(message)
 
 
+def execution_stages(plan):
+    stages=plan.get('execution_stages',list(STAGES))
+    need(isinstance(stages,list) and stages and tuple(stages)==STAGES[:len(stages)],
+         'Recovery stages must be a nonempty approved prefix')
+    return stages
+
+
+def scientific_scope(plan):
+    stages=execution_stages(plan);fits=dict(umap=1,tsne=2,labels=2,density=15)
+    return dict(SCOPE,maximum_new_projection_fits=sum(fits[s] for s in stages),
+                maximum_hdbscan_extractions=30 if 'density' in stages else 0)
+
+
 def attempt_accounting(plan):
-    value=plan['fit_accounting'];previous=value['previous_attempts_charged']
+    value=plan['fit_accounting'];previous=value['previous_attempts_charged'];scope=scientific_scope(plan)
     need(type(previous) is int and previous>=0
-         and value['maximum_new_projection_fits']==SCOPE['maximum_new_projection_fits']
-         and value['maximum_cumulative_attempts']==previous+SCOPE['maximum_new_projection_fits'],
+         and value['maximum_new_projection_fits']==scope['maximum_new_projection_fits']
+         and value['maximum_cumulative_attempts']==previous+scope['maximum_new_projection_fits'],
          'Frozen cumulative fit accounting differs')
     return dict(previous_attempts_charged=previous,maximum_cumulative_attempts=value['maximum_cumulative_attempts'])
 
@@ -39,7 +52,7 @@ def approved(path):
     proof = json.loads((path.parent/'approval.json').read_text())
     need(proof.get('approved_by') == 'user' and proof.get('approved_plan_sha256') == sha256(path),
          'Exact recovery-plan approval required')
-    need(plan['operation'] == 'serca-selected-cache-recovery' and plan['settings'] == SCOPE
+    need(plan['operation'] == 'serca-selected-cache-recovery' and plan['settings'] == scientific_scope(plan)
          and plan['target']['target'] == SCOPE['target'] and plan['target']['model_count'] == 5072,
          'Approved SERCA recovery scope differs')
     attempt_accounting(plan)
@@ -50,18 +63,69 @@ def approved(path):
     return plan
 
 
+def workspace_backing(plan):
+    value=plan.get('ssd_scratch',{}).get('backing','ssd')
+    need(value in ('ssd','tmpfs'),'Unknown native workspace backing')
+    return value
+
+
 def ssd_root(plan):
-    root = Path(plan['ssd_scratch']['root']).absolute()
-    need(root.parent == Path(plan['run_root']).absolute() and root.name == 'stage-tmp'
-         and not any(p.is_symlink() for p in [root,*root.parents]), 'SSD workspace scope differs')
+    """Legacy field name; only the explicit opt-in uses the owned RAM root."""
+    root=Path(plan['ssd_scratch']['root']).absolute();backing=workspace_backing(plan)
+    if backing=='tmpfs':
+        from analysis_scratch import scratch_root
+        outer=scratch_root(plan)
+        need(root==outer/'native-stages' and root.parent==Path(plan['environment']['TMPDIR']).absolute(),
+             'Tmpfs workspace must be the exact approved RAM root/native-stages')
+    else:
+        need(root.parent==Path(plan['run_root']).absolute() and root.name=='stage-tmp',
+             'SSD workspace scope differs')
+    need('..' not in root.parts and not any(p.is_symlink() for p in [root,*root.parents]),
+         'Native workspace contains a symlink or parent traversal')
     return root
 
 
+def mount_type(path):
+    mounts=[]
+    for number,line in enumerate(Path('/proc/self/mountinfo').read_text().splitlines()):
+        before,_,after=line.partition(' - ');mount=Path(before.split()[4])
+        if path==mount or mount in path.parents:mounts.append((len(mount.parts),number,after.split()[0]))
+    need(mounts,'Native workspace filesystem is unknown')
+    return max(mounts)[2]
+
+
+def assert_backing(path,plan):
+    kind=mount_type(path);backing=workspace_backing(plan)
+    need(kind=='tmpfs' if backing=='tmpfs' else kind not in ('tmpfs','ramfs'),
+         'Native workspace filesystem differs from approved '+backing+' backing')
+
+
+def validate_outer_owner(plan, plan_sha256):
+    """The outer tmpfs root is owned separately by analysis_scratch."""
+    if workspace_backing(plan)!='tmpfs':return
+    from analysis_scratch import scratch_root
+    outer=scratch_root(plan);marker=outer/'.owner.json'
+    need(outer.is_dir() and not any(p.is_symlink() for p in [outer,*outer.parents])
+         and marker.is_file() and not marker.is_symlink(),'Outer RAM ownership marker missing or changed')
+    info=outer.stat();owner=marker.stat();assert_backing(outer,plan)
+    need(info.st_uid==owner.st_uid==os.getuid() and owner.st_nlink==1 and owner.st_dev==info.st_dev
+         and json.loads(marker.read_text())==dict(plan_sha256=plan_sha256,uid=os.getuid(),device=info.st_dev,inode=info.st_ino),
+         'Outer RAM ownership identity changed')
+
+
+def check_ram_capacity(plan):
+    if workspace_backing(plan)=='tmpfs':
+        minimum=plan['ssd_scratch']['minimum_free_bytes_before_stage']
+        need(type(minimum) is int and minimum>0,'Explicit positive RAM workspace admission reserve required')
+        need(shutil.disk_usage(ssd_root(plan).parent).free>=minimum,'Insufficient free tmpfs workspace capacity')
+
+
 def create_ssd(path, plan):
-    root = ssd_root(plan);root.mkdir(mode=0o700)
-    info = root.stat()
-    need(info.st_dev == root.parent.stat().st_dev and not root.is_relative_to('/dev/shm'),
-         'Workspace must use the approved output SSD filesystem')
+    validate_outer_owner(plan,sha256(path))
+    root=ssd_root(plan);assert_backing(root.parent,plan);check_ram_capacity(plan)
+    root.mkdir(mode=0o700);info=root.stat()
+    need(info.st_dev==root.parent.stat().st_dev,'Workspace crosses the approved filesystem')
+    if workspace_backing(plan)=='ssd':need(not root.is_relative_to('/dev/shm'),'SSD workspace cannot use RAM scratch')
     save(root/'.owner.json',dict(plan_sha256=sha256(path),uid=os.getuid(),device=info.st_dev,inode=info.st_ino))
     for stage in STAGES:(root/stage).mkdir(mode=0o700)
 
@@ -75,14 +139,20 @@ def check_owned_tree(root):
              'Workspace contains a foreign owner, link, special file or mount')
 
 
-def validate_ssd_owner(path, plan):
+def validate_workspace_owner(plan, plan_sha256):
+    validate_outer_owner(plan,plan_sha256)
     root = ssd_root(plan)
-    need(root.is_dir() and not root.is_symlink(), 'SSD workspace root changed')
+    need(root.is_dir() and not root.is_symlink(), 'Native workspace root changed')
+    assert_backing(root,plan)
     marker = root/'.owner.json';need(marker.is_file() and not marker.is_symlink(), 'Missing workspace owner')
     info=root.stat()
-    need(json.loads(marker.read_text()) == dict(plan_sha256=sha256(path),uid=os.getuid(),device=info.st_dev,inode=info.st_ino),
-         'SSD workspace ownership identity changed')
+    need(json.loads(marker.read_text()) == dict(plan_sha256=plan_sha256,uid=os.getuid(),device=info.st_dev,inode=info.st_ino),
+         'Native workspace ownership identity changed')
     return root
+
+
+def validate_ssd_owner(path, plan):
+    return validate_workspace_owner(plan,sha256(path))
 
 
 def stage_processes():
@@ -104,9 +174,13 @@ def cleanup(path, plan):
     from analysis_scratch import assert_quiescent, cleanup as cleanup_ram
     root=ssd_root(plan)
     if root.exists() or root.is_symlink():
-        assert_quiescent();validate_ssd_owner(path,plan);check_owned_tree(root);shutil.rmtree(root)
-        save(Path(plan['run_root'])/'ssd-cleanup.json',dict(status='removed_owned_disposable_ssd_workspace',
-            plan_sha256=sha256(path),path=str(root),service_result=os.environ.get('SERVICE_RESULT')))
+        assert_quiescent()
+        need(stage_processes()=={os.getpid()},'Cleanup requires a quiescent unit including descendants')
+        validate_ssd_owner(path,plan);check_owned_tree(root);shutil.rmtree(root)
+        backing=workspace_backing(plan)
+        name='native-workspace-cleanup.json' if backing=='tmpfs' else 'ssd-cleanup.json'
+        save(Path(plan['run_root'])/name,dict(status='removed_owned_disposable_'+backing+'_workspace',
+            plan_sha256=sha256(path),path=str(root),backing=backing,service_result=os.environ.get('SERVICE_RESULT')))
     cleanup_ram(path,plan)
 
 
@@ -233,7 +307,11 @@ def sample_child(process, plan, stage):
 
 
 def run_child(path, plan, context, stage, *, check):
-    slot=Path(context['stage_tmpdirs'][stage]);env=dict(os.environ,TMPDIR=str(slot))
+    slot=Path(context['stage_tmpdirs'][stage])
+    workspace=validate_ssd_owner(path,plan)
+    need(slot==workspace/stage and slot.is_dir() and not slot.is_symlink(), 'Exact planned native stage workspace required')
+    assert_backing(slot,plan);check_ram_capacity(plan)
+    env=dict(os.environ,TMPDIR=str(slot))
     baseline=stage_processes();need(os.getpid() in baseline,'Stage controller is outside its unit')
     process=subprocess.Popen([sys.executable,str(Path(__file__).absolute()),str(path),'--stage',stage],env=env)
     try:
@@ -267,6 +345,7 @@ def main():
                  'Approved SSD output/workspace envelope reached')
             last_size[0]=now
     if args.stage:
+        need(args.stage in execution_stages(plan),'Stage is outside the approved prefix')
         context=json.loads((root/'recovery-context.json').read_text())
         validate_context(path,plan,context)
         need(os.getppid()==context['parent_pid']
@@ -280,17 +359,22 @@ def main():
     client=guard.DurableCheckpoint(policy['control_directory'],policy['run_id'])
     client.checkpoint('serca-recovery-start');create_ssd(path,plan)
     context=prepare_context(path,plan,check=check,checkpoint=client.checkpoint)
-    for stage in STAGES:
+    stages=execution_stages(plan)
+    for stage in stages:
         check();client.checkpoint('serca-before-'+stage)
         baseline=run_child(path,plan,context,stage,check=check)
         retire_stage(path,plan,stage,baseline)
         client.checkpoint('serca-closed-'+stage)
-    result=dict(status='serca_primary_and_density_recovered',plan_sha256=sha256(path),
-        primary_manifest=record(root/'primary/manifest.json'),density=record(root/'density/density-receipt.json'),
-        PCA_reused=True,new_projection_fits_max=20,HDBSCAN_extractions_max=30,
+    complete='density' in stages;scope=scientific_scope(plan)
+    result=dict(status='serca_primary_and_density_recovered' if complete else 'serca_selected_stages_ready',plan_sha256=sha256(path),
+        primary_manifest=record(root/('primary/manifest.json' if complete else 'primary/manifest.progress.json')),
+        completed_recovery_stages=stages,full_clustering_complete=complete,
+        PCA_reused=True,new_projection_fits_max=scope['maximum_new_projection_fits'],
+        HDBSCAN_extractions_max=scope['maximum_hdbscan_extractions'],
         **attempt_accounting(plan),
         native_TM_calls=0,coordinate_parses=0,scoring_calls=0,molecular_exports=0,public_site_changed=False,
         model_selection_status='pending separate plan using actual cluster counts')
+    if complete:result['density']=record(root/'density/density-receipt.json')
     save(root/'serca-recovery-completion.json',result)
 
 

@@ -163,6 +163,19 @@ class StageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'umap receipt'):self.call('labels',plan,context,adapters)
             self.assertEqual(state['knn_calls'],0);self.assertFalse((root/'primary/manifest.json').exists())
 
+    @unittest.skipUnless(importlib.util.find_spec('numpy'),'Optional NumPy for static array fixtures')
+    def test_tmpfs_stage_keeps_native_recipe_and_records_actual_backing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);plan,context,adapters,state,_=self.fixture(root)
+            plan['ssd_scratch']={'backing':'tmpfs'}
+            self.call('umap',plan,context,adapters)
+            options=state['worker_options'][0]
+            self.assertEqual((options['umap_n_neighbors'],options['umap_min_dist'],options['umap_n_components']),(15,.1,2))
+            self.assertEqual(options['tsne_implementation'],'python');state['cache_writer'].assert_not_called()
+            manifest=json.loads(Path(context['newprimary_manifest']).read_text())
+            self.assertEqual(manifest['completed_recovery_stages']['umap']['workspace_backing'],
+                             'plan-owned tmpfs (charged to job memory cgroup)')
+
     def test_cache_composition_rejects_other_persistence_requests_without_writer(self):
         target=stage_adapter.ExistingPreparedCache(SimpleNamespace(),'SERCA',Path('/frozen'),{'path':'/frozen/cache.npz'})
         writer=Mock()
@@ -177,6 +190,66 @@ class StageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'wrong workspace'):
                 stage_adapter.run_stage('umap',{}, {},check=lambda:None,log=lambda _:None)
             native.assert_not_called()
+
+
+class WorkspaceGateTests(unittest.TestCase):
+    def fixture(self,root):
+        import serca_recovery as recovery
+        output=root/'run';output.mkdir();outer=root/'ram';outer.mkdir()
+        plan=dict(run_root=str(output),environment=dict(TMPDIR=str(outer)),
+            ssd_scratch=dict(backing='tmpfs',root=str(outer/'native-stages'),minimum_free_bytes_before_stage=200))
+        source=root/'plan.json';source.write_text('{}')
+        info=outer.stat()
+        (outer/'.owner.json').write_text(json.dumps(dict(plan_sha256=recovery.sha256(source),uid=os.getuid(),device=info.st_dev,inode=info.st_ino)))
+        self.enterContext(patch('analysis_scratch.scratch_root',return_value=outer))
+        self.enterContext(patch.object(recovery,'mount_type',return_value='tmpfs'))
+        self.enterContext(patch.object(recovery.shutil,'disk_usage',return_value=SimpleNamespace(free=1000)))
+        recovery.create_ssd(source,plan)
+        context=dict(plan_sha256=recovery.sha256(source),stage_tmpdirs={s:str(outer/'native-stages'/s) for s in stage_adapter.STAGES})
+        slot=Path(context['stage_tmpdirs']['umap'])
+        self.enterContext(patch.dict(os.environ,TMPDIR=str(slot)))
+        self.enterContext(patch.object(stage_adapter.tempfile,'gettempdir',return_value=str(slot)))
+        return plan,context,slot
+
+    def test_missing_or_tampered_outer_owner_prevents_native_imports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan,context,slot=self.fixture(Path(tmp));marker=slot.parent.parent/'.owner.json';original=marker.read_bytes()
+            for bad in ('missing','tampered'):
+                with self.subTest(bad=bad),patch.object(stage_adapter,'adapters_for_native') as native:
+                    if bad=='missing':marker.unlink()
+                    else:marker.write_text('{}')
+                    with self.assertRaisesRegex(ValueError,'Outer RAM ownership'):
+                        stage_adapter.run_stage('umap',plan,context,check=lambda:None,log=lambda _:None)
+                    native.assert_not_called()
+                    marker.write_bytes(original)
+
+    def test_exact_tmpfs_slot_and_tempfile_cache_are_checked_before_native_imports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan,context,slot=self.fixture(Path(tmp))
+            self.assertEqual(stage_adapter.assert_ssd_tmpdir('umap',plan,context),slot)
+            with patch.object(stage_adapter.tempfile,'gettempdir',return_value=str(slot.parent)),patch.object(stage_adapter,'adapters_for_native') as native:
+                with self.assertRaisesRegex(ValueError,'Native tempfile backing'):
+                    stage_adapter.run_stage('umap',plan,context,check=lambda:None,log=lambda _:None)
+                native.assert_not_called()
+
+    def test_tmpfs_stage_rejects_mount_or_context_or_owner_tampering_before_engines(self):
+        import serca_recovery as recovery
+        with tempfile.TemporaryDirectory() as tmp:
+            plan,context,slot=self.fixture(Path(tmp))
+            for bad in ('mount','context','owner'):
+                with self.subTest(bad=bad),patch.object(stage_adapter,'adapters_for_native') as native:
+                    if bad=='mount':
+                        with patch.object(recovery,'mount_type',return_value='ext4'):
+                            with self.assertRaisesRegex(ValueError,'approved tmpfs'):
+                                stage_adapter.run_stage('umap',plan,context,check=lambda:None,log=lambda _:None)
+                    elif bad=='context':
+                        other=dict(context,stage_tmpdirs=dict(context['stage_tmpdirs'],umap=str(Path(plan['run_root'])/'stage-tmp/umap')))
+                        with self.assertRaisesRegex(ValueError,'Exact plan-owned'):
+                            stage_adapter.run_stage('umap',plan,other,check=lambda:None,log=lambda _:None)
+                    else:
+                        with self.assertRaisesRegex(ValueError,'ownership identity'):
+                            stage_adapter.run_stage('umap',plan,dict(context,plan_sha256='0'*64),check=lambda:None,log=lambda _:None)
+                    native.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

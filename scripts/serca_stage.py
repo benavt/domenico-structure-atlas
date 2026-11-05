@@ -1,6 +1,6 @@
 """One approved SERCA recovery stage per fresh process; no work on import.
 
-The parent owns approval, original verification, cgroups, stage-specific SSD
+The parent owns approval, original verification, cgroups, stage-specific disk or tmpfs
 TMPDIR and RAM I/O control. This worker never fabricates estimator checkpoints,
 restarts fits, re-exports coordinates, or rebuilds numerical feature caches.
 """
@@ -30,14 +30,14 @@ def adapters_for_native():
 
 
 def assert_ssd_tmpdir(stage,plan,context):
-    path=Path(context['stage_tmpdirs'][stage]).absolute();run=Path(plan['run_root']).absolute()
-    need(os.environ.get('TMPDIR')==str(path) and path.is_relative_to(run) and path.is_dir()
+    """Require exact backing/slot before importing any numerical engines."""
+    from serca_recovery import validate_workspace_owner,assert_backing,check_ram_capacity
+    root=validate_workspace_owner(plan,context['plan_sha256']);path=Path(context['stage_tmpdirs'][stage]).absolute()
+    need(path==root/stage and os.environ.get('TMPDIR')==str(path) and path.is_dir()
          and not any(p.is_symlink() for p in [path,*path.parents]),'Exact plan-owned stage TMPDIR required before native imports')
-    mounts=[]
-    for line in Path('/proc/self/mountinfo').read_text().splitlines():
-        before,_,after=line.partition(' - ');mount=Path(before.split()[4])
-        if path==mount or mount in path.parents:mounts.append((len(mount.parts),after.split()[0]))
-    need(mounts and max(mounts)[1] not in ('tmpfs','ramfs'), 'Heavy native workspace must use the reviewed SSD backing')
+    assert_backing(path,plan);check_ram_capacity(plan)
+    need(path.stat().st_dev==root.stat().st_dev,'Stage workspace crosses the owned filesystem')
+    need(Path(tempfile.gettempdir()).absolute()==path,'Native tempfile backing differs from approved stage TMPDIR')
     return path
 
 
@@ -241,7 +241,8 @@ def run_stage(stage,plan,context,*,check,log,adapters=None):
     need(record(context['metrics_db'],check)==metrics,'Fresh copied metrics changed during stage')
     need(record(path,check)==before,'Progress manifest changed concurrently')
     manifest.setdefault('completed_recovery_stages',{})[stage]=dict(receipt=receipt,selected_cache_proof=slim,
-        workspace_backing='plan-owned SSD',TMPDIR=str(tmpdir),fresh_process_required=True)
+        workspace_backing=('plan-owned tmpfs (charged to job memory cgroup)'
+            if plan.get('ssd_scratch',{}).get('backing','ssd')=='tmpfs' else 'plan-owned SSD'),TMPDIR=str(tmpdir),fresh_process_required=True)
     result_manifest=path
     if stage=='density':
         result_manifest=path.parent/'manifest.json'

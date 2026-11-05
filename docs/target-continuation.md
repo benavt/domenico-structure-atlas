@@ -131,3 +131,12 @@ native loaders may migrate them. An approved outer launcher must supply fresh
 processes, controls and exact budgets. Generic public state attachment and final
 camera-dependent reports remain separate work. The publisher now describes the
 actual retained masks while retaining its full-construct coordinate/energy schema.
+
+An explicit recovery-stage prefix can now narrow execution to a single full-
+cohort UMAP pilot. Its one-fit budget and partial completion receipt preserve
+PCA/UMAP evidence without claiming t-SNE, labels or density are finished.
+Native workspace backing may be explicitly set to tmpfs inside the marked
+plan RAM directory; both outer and inner owners, mount, capacity and cleanup
+are verified. All scratch RAM counts inside the same job memory cap. This
+option avoids SSD workspace pressure, while zero-swap and host-reserve checks
+still apply; it does not make RAM workspace reclaimable or guarantee a peak.

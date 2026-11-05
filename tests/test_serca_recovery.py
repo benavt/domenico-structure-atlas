@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -18,6 +19,9 @@ def put(path,value):
 
 
 class WorkspaceTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(recovery,'mount_type',return_value='ext4'))
+
     def fixture(self,root):
         plan=dict(run_root=str(root),ssd_scratch=dict(root=str(root/'stage-tmp')))
         p=root/'plan.json';p.write_text('{}')
@@ -53,7 +57,7 @@ class WorkspaceTests(unittest.TestCase):
     @patch.object(recovery,'stage_processes',side_effect=lambda:{os.getpid()})
     def test_subprocess_owns_ssd_tmpdir_and_failure_never_counts_as_success(self,_processes):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);path,plan=self.fixture(root)
+            root=Path(tmp);path,plan=self.fixture(root);recovery.create_ssd(path,plan)
             context=dict(stage_tmpdirs=dict(umap=str(root/'stage-tmp/umap')))
             child=Mock();child.poll.return_value=1;child.returncode=1
             with patch.object(recovery.subprocess,'Popen',return_value=child) as launch:
@@ -145,6 +149,14 @@ class SavedPCATests(unittest.TestCase):
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_full_cohort_umap_pilot_has_one_fit_and_no_density_or_later_stages(self):
+        plan=dict(execution_stages=['umap'],fit_accounting=dict(previous_attempts_charged=25,maximum_new_projection_fits=1,maximum_cumulative_attempts=26))
+        self.assertEqual(recovery.scientific_scope(plan)['maximum_new_projection_fits'],1)
+        self.assertEqual(recovery.scientific_scope(plan)['maximum_hdbscan_extractions'],0)
+        self.assertEqual(recovery.attempt_accounting(plan)['maximum_cumulative_attempts'],26)
+        for stages in ([],['tsne'],['umap','density'],list(recovery.STAGES)+['umap']):
+            with self.subTest(stages=stages),self.assertRaises(ValueError):recovery.execution_stages(dict(execution_stages=stages))
+
     def test_attempts_come_from_frozen_plan_and_cannot_hide_an_interrupted_fit(self):
         value=dict(previous_attempts_charged=24,maximum_new_projection_fits=20,maximum_cumulative_attempts=44)
         self.assertEqual(recovery.attempt_accounting(dict(fit_accounting=value)),
@@ -165,6 +177,87 @@ class ApprovalTests(unittest.TestCase):
                 with patch('run_reviewed_plan.verify_controls') as controls:
                     with self.assertRaises(ValueError):recovery.approved(p)
                     controls.assert_not_called()
+
+
+class TmpfsWorkspaceTests(unittest.TestCase):
+    def fixture(self,root):
+        output=root/'run';output.mkdir();outer=root/'ram';outer.mkdir()
+        plan=dict(run_root=str(output),environment=dict(TMPDIR=str(outer)),
+            ssd_scratch=dict(backing='tmpfs',root=str(outer/'native-stages'),minimum_free_bytes_before_stage=200))
+        path=root/'plan.json';path.write_text('{}')
+        info=outer.stat()
+        put(outer/'.owner.json',dict(plan_sha256=recovery.sha256(path),uid=os.getuid(),device=info.st_dev,inode=info.st_ino))
+        self.enterContext(patch('analysis_scratch.scratch_root',return_value=outer))
+        self.enterContext(patch.object(recovery,'mount_type',return_value='tmpfs'))
+        self.enterContext(patch.object(recovery.shutil,'disk_usage',return_value=SimpleNamespace(free=1000)))
+        return path,plan,outer
+
+    def test_missing_or_tampered_outer_marker_prevents_inner_allocation(self):
+        for bad in ('missing','tampered'):
+            with self.subTest(bad=bad),tempfile.TemporaryDirectory() as tmp:
+                path,plan,outer=self.fixture(Path(tmp));marker=outer/'.owner.json'
+                if bad=='missing':marker.unlink()
+                else:marker.write_text('{}')
+                with self.assertRaisesRegex(ValueError,'Outer RAM ownership'):
+                    recovery.create_ssd(path,plan)
+                self.assertFalse((outer/'native-stages').exists())
+
+    def test_tmpfs_lifecycle_removes_only_inner_owned_tree_then_outer_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path,plan,outer=self.fixture(Path(tmp));recovery.create_ssd(path,plan)
+            workspace=outer/'native-stages';saved=Path(plan['run_root'])/'saved.npz';saved.write_bytes(b'preserve')
+            (workspace/'umap/input.npy').write_bytes(b'static disposable fixture')
+            with patch.object(recovery,'stage_processes',return_value={os.getpid()}):
+                recovery.retire_stage(path,plan,'umap',{os.getpid()})
+            self.assertFalse((workspace/'umap').exists());self.assertTrue((workspace/'tsne').is_dir())
+            with patch('analysis_scratch.assert_quiescent'),patch.object(recovery,'stage_processes',return_value={os.getpid()}),patch('analysis_scratch.cleanup') as outer_cleanup:
+                outer_cleanup.side_effect=lambda *args:self.assertFalse(workspace.exists())
+                recovery.cleanup(path,plan);outer_cleanup.assert_called_once_with(path,plan)
+            self.assertEqual(saved.read_bytes(),b'preserve')
+            proof=json.loads((Path(plan['run_root'])/'native-workspace-cleanup.json').read_text())
+            self.assertEqual(proof['backing'],'tmpfs');self.assertEqual(proof['status'],'removed_owned_disposable_tmpfs_workspace')
+            self.assertFalse((Path(plan['run_root'])/'ssd-cleanup.json').exists())
+
+    def test_tmpfs_root_cannot_escape_exact_outer_root_or_change_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path,plan,outer=self.fixture(Path(tmp));root=Path(plan['run_root'])
+            plan.update(target={'selected_cache':'accepted'},native_density={'commit':'native'})
+            context=dict(plan_sha256=recovery.sha256(path),descriptor=plan['target'],native_density=plan['native_density'],
+                newprimary_manifest=str(root/'primary/manifest.progress.json'),metrics_db=str(root/'metrics.sqlite'),
+                stage_tmpdirs={s:str(outer/'native-stages'/s) for s in recovery.STAGES})
+            recovery.validate_context(path,plan,context)
+            with self.assertRaisesRegex(ValueError,'exact approved'):
+                recovery.validate_context(path,plan,dict(context,stage_tmpdirs={s:str(root/'stage-tmp'/s) for s in recovery.STAGES}))
+            plan['ssd_scratch']['root']=str(root/'stage-tmp')
+            with self.assertRaisesRegex(ValueError,'exact approved RAM'):recovery.ssd_root(plan)
+
+    def test_capacity_and_filesystem_gates_precede_creation_and_child_launch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path,plan,outer=self.fixture(Path(tmp));workspace=outer/'native-stages'
+            with patch.object(recovery.shutil,'disk_usage',return_value=SimpleNamespace(free=199)):
+                with self.assertRaisesRegex(ValueError,'Insufficient free tmpfs'):recovery.create_ssd(path,plan)
+            self.assertFalse(workspace.exists())
+            with patch.object(recovery,'mount_type',return_value='ext4'):
+                with self.assertRaisesRegex(ValueError,'approved tmpfs'):recovery.create_ssd(path,plan)
+            recovery.create_ssd(path,plan)
+            context=dict(stage_tmpdirs={s:str(workspace/s) for s in recovery.STAGES})
+            with patch.object(recovery.shutil,'disk_usage',return_value=SimpleNamespace(free=199)),patch.object(recovery.subprocess,'Popen') as launch:
+                with self.assertRaisesRegex(ValueError,'Insufficient free tmpfs'):
+                    recovery.run_child(path,plan,context,'umap',check=lambda:None)
+                launch.assert_not_called()
+            self.assertTrue((workspace/'umap').is_dir())
+
+    def test_tmpfs_cleanup_refuses_live_descendants_and_foreign_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path,plan,outer=self.fixture(Path(tmp));recovery.create_ssd(path,plan);workspace=outer/'native-stages'
+            with patch('analysis_scratch.assert_quiescent'),patch.object(recovery,'stage_processes',return_value={os.getpid(),99999}),patch('analysis_scratch.cleanup') as outer_cleanup:
+                with self.assertRaisesRegex(ValueError,'including descendants'):recovery.cleanup(path,plan)
+                outer_cleanup.assert_not_called()
+            (workspace/'.owner.json').write_text('{}')
+            with patch('analysis_scratch.assert_quiescent'),patch.object(recovery,'stage_processes',return_value={os.getpid()}),patch('analysis_scratch.cleanup') as outer_cleanup:
+                with self.assertRaisesRegex(ValueError,'ownership identity'):recovery.cleanup(path,plan)
+                outer_cleanup.assert_not_called()
+            self.assertTrue(workspace.is_dir())
 
 
 if __name__=='__main__':unittest.main()
