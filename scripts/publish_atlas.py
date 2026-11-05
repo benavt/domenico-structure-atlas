@@ -67,6 +67,37 @@ def structure_delivery(plan):
     return mode
 
 
+def residue_presentation(detection, count):
+    """Describe the saved canonical mask without inferring or changing its scope."""
+    retained = detection.get('retained_reference_positions')
+    if (type(count) is not int or count < 3 or not isinstance(retained, list)
+            or len(retained) < 3 or any(type(i) is not int or not 0 <= i < count for i in retained)
+            or retained != sorted(set(retained))):
+        raise ValueError('Saved retained residue positions must uniquely index the supplied construct')
+    excluded = sorted(set(range(count))-set(retained))
+    if 'excluded_indices' in detection and detection['excluded_indices'] != excluded:
+        raise ValueError('Saved excluded residues disagree with the retained mask')
+    positions = [i+1 for i in retained]
+    segments = []
+    for position in positions:
+        if segments and position == segments[-1][1]+1:
+            segments[-1][1] = position
+        else:
+            segments.append([position, position])
+    ranges = ', '.join(str(first) if first == last else f'{first}–{last}' for first, last in segments)
+    full = len(retained) == count
+    return dict(positions=positions, full=full, ranges=ranges,
+        reference_ranges='construct positions '+ranges,
+        range_name='All residues' if full else f'Clustering core · {ranges} ({len(retained)}/{count} residues)',
+        mask_note=(f'All {count} supplied construct residues retained; native numbering preserved. Biological disorder is not inferred.'
+            if full else f'{len(retained)} of {count} supplied construct residues retained for clustering (construct positions {ranges}); '
+                f'{len(excluded)} residues excluded. Native numbering preserved. Biological disorder is not inferred.'),
+        ensemble_interpretation=('Cluster populations describe generated models, not equilibrium state probabilities. '
+            + ('Conservative screening retained every supplied construct residue; this does not establish biological order.'
+               if full else f'Clustering uses {len(retained)} of {count} supplied construct residues (construct positions {ranges}). '
+                    'Retained ranges reflect saved screening evidence; biological order is not inferred.')))
+
+
 def public_bonsai(tree):
     """Carry saved geometry and scientific evidence without private runtime paths."""
     result = {key: tree[key] for key in ['schema_version', 'models', 'layouts', 'method', 'scope', 'group_count']}
@@ -492,7 +523,7 @@ def build(plan_path, *, export_site=True):
         for name in pending]}
     scopes = {'schema_version': 1, 'targets': {}}
     ranges = {'schema_version': 1, 'targets': {}}
-    bindings = {}
+    bindings, residue_notes = {}, {}
     for target, frozen in plan['targets'].items():
         manifest = checked_json(frozen['manifest'], frozen['manifest_sha256'])
         if manifest['analysis_status'] != 'complete' or manifest['identifier'] != target:
@@ -527,11 +558,12 @@ def build(plan_path, *, export_site=True):
                 raise ValueError('Original archive inventory differs from accepted native coordinates')
             public_archive = {key: archive[key] for key in ['url', 'sha256', 'bytes', 'models']}
         detection = manifest['terminal_detection']; count = study['targets'][target]['residues']
-        positions = [index+1 for index in detection['retained_reference_positions']]
+        residue_note = residue_presentation(detection, count); residue_notes[target] = residue_note
+        positions = residue_note['positions']
         scope = {'chain': 'A', 'sequence_sha256': study['targets'][target]['sequence_sha256'], 'expected_ca_count': count,
-                 'canonical_positions': positions, 'analysis_uses_full_construct': not detection['excluded_indices'],
+                 'canonical_positions': positions, 'analysis_uses_full_construct': residue_note['full'],
                  'note': 'Canonical positions here index the supplied construct, not full-length UniProt; native file labels are preserved.',
-                 'regions_verified': False, 'reference_ranges': f'construct positions 1–{count}'}
+                 'regions_verified': False, 'reference_ranges': residue_note['reference_ranges']}
         region_scope, region_figure = saved_region_scope(frozen, manifest, count, names,
             study['targets'][target]['sequence_sha256'], folder, source)
         scope.update(region_scope)
@@ -566,11 +598,13 @@ def build(plan_path, *, export_site=True):
                     row, score = expected[name], by_confidence[name]
                     writer.writerow([name, row['method'], labels[name]['cluster_label'], row['native_physicality'], row['sha256'], score['mean_plddt'], score['ptm'], *[row[f'energy_t{i:02d}'] for i in range(16)]])
             data = {'target': target, 'view_id': view['id'], 'view_title': study['targets'][target]['title']+' · '+view['name'],
-                'models': names, 'residues': count, 'methods': method_names, 'clusters': cluster_values, 'projections': xy, 'schemes': schemes,
+                'models': names, 'residues': count, 'construct_residues': count, 'clustering_residue_count': len(positions),
+                'clustering_positions': positions, 'range_id': 'all',
+                'methods': method_names, 'clusters': cluster_values, 'projections': xy, 'schemes': schemes,
                 'representatives': representatives, 'views': view_links, 'membership_file': str(membership.relative_to(source)), 'heatmaps': heatmaps,
                 'coordinate_delivery': delivery, 'representative_kind': 'confidence-ranked representative or unscored structural medoid',
                 'representative_policy': ('Plot and Bonsai point selections show the corresponding cluster representative. Only cluster representative and saved state-panel coordinates are published. ' if delivery == 'representatives' else '')+'Highest genuine native confidence among the default selected ensemble; unscored clusters use the recorded structural medoid. Energy is not confidence. Unassigned density points remain plotted and have no cluster representative.',
-                'mask_note': f'All {count} supplied construct residues retained; native numbering preserved. Biological disorder is not inferred.',
+                'canonical_positions': positions, 'mask_note': residue_note['mask_note'],
                 'clustering_method_note': view['method_note'],
                 'provenance': {'workflow_manifest_sha256': frozen['manifest_sha256'], 'native_manifest_sha256': plan['native']['sha256'],
                     'sequence_sha256': study['targets'][target]['sequence_sha256'], 'pair_mask_sha256': detection['pair_mask_sha256'],
@@ -595,9 +629,10 @@ def build(plan_path, *, export_site=True):
             target_bindings[view['id']] = {'id': view['id'], 'name': view['name'], 'data': target+'/'+view['data'],
                 'asset_root': '', 'source_view_id': view['id'], 'source_data_sha256': sha256(data_file),
                 'canonical_positions': positions, 'available': True}
-        if len(views) > 1:
-            ranges['targets'][target] = {'residue_ranges': [{'id': 'all', 'name': 'All residues', 'data': target+'/primary.json',
-                'asset_root': '', 'default_view': 'density', 'available': True, 'views': list(target_bindings.values())}]}
+        if len(views) > 1 or not residue_note['full']:
+            ranges['targets'][target] = {'residue_ranges': [{'id': 'all', 'name': residue_note['range_name'], 'data': target+'/primary.json',
+                'asset_root': '', 'default_view': 'density' if 'density' in target_bindings else views[0]['id'],
+                'available': True, 'canonical_positions': positions, 'views': list(target_bindings.values())}]}
         bindings[target] = {'models': names, 'model_count': len(names), 'model_order_sha256': ordered_models_sha256(names),
             'sequence_sha256': study['targets'][target]['sequence_sha256'], 'clustering_positions': positions,
             'scope': scope, 'coordinate_delivery': delivery, 'views': target_bindings}
@@ -615,7 +650,7 @@ def build(plan_path, *, export_site=True):
             'provenance': {'analysis_sequence_sha256': study['targets'][target]['sequence_sha256']},
             'references': [{'label': 'UniProt reference sequence and annotation', 'url': record['source']}],
             'project_writeup': {'status': 'Accepted model snapshot; exploratory clustering', 'biological_relevance': None,
-                'ensemble_interpretation': 'Cluster populations describe generated models, not equilibrium state probabilities. Conservative screening retained every supplied construct residue; this does not establish biological order.',
+                'ensemble_interpretation': residue_notes[target]['ensemble_interpretation'],
                 'project_citations': [], 'project_record_url': 'https://github.com/benavt/domenico-structure-atlas'}}
     for name, payload in [('target-context.json', context), ('atlas.json', atlas), ('clustering-residues.json', scopes)]:
         (source/name).write_text(json.dumps(payload, indent=2)+'\n')
@@ -627,11 +662,16 @@ def build(plan_path, *, export_site=True):
     title = plan.get('presentation_title', title)
     coordinate_note = ('All projection points are retained; structure selections show cluster representatives. Coordinate files are limited to representatives and explicitly saved state panels. '
         if delivery == 'representatives' else 'Point views are exact native Cα traces; cluster representatives retain full atoms. ')
+    has_density = any('density' in binding['views'] for binding in bindings.values())
     clustering_note = ('Saved recursive HDBSCAN is the default label view where available, alongside the original validated UMAP partition. '
-        if ranges['targets'] else 'Default validated common cluster partition. ')
+        if has_density else 'Default validated common cluster partition. ')
+    feature_note = ('Full-construct Cα distances. ' if all(note['full'] for note in residue_notes.values())
+        else 'Cα distances over saved retained residue masks: '+ '; '.join(
+            f"{study['targets'][target]['title']} {len(note['positions'])}/{study['targets'][target]['residues']} construct residues ({note['ranges']})"
+            for target, note in residue_notes.items())+'. ')
     publication = {'schema_version': 1, 'project': 'domenico-structure-atlas', 'renderer': 'ais-explorer-v1',
-        'presentation': {'title': title, 'methods': scope_note+'Accepted fixed scored snapshot. Full-construct Cα distances. '+clustering_note+'Genuine native confidence and separate saved ProteinEBM energies. '+coordinate_note+'Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'}, 'files': []}
-    if ranges['targets']: publication['presentation']['clustering_order'] = 'hdbscan-first'
+        'presentation': {'title': title, 'methods': scope_note+'Accepted fixed scored snapshot. '+feature_note+clustering_note+'Genuine native confidence and separate saved ProteinEBM energies. '+coordinate_note+'Native rejection flags never filter the cohort. Camera-dependent reports are delivered after review.'}, 'files': []}
+    if has_density: publication['presentation']['clustering_order'] = 'hdbscan-first'
     manifest = source.parent/'publication-manifest.json'; manifest.write_text(json.dumps(publication, indent=2)+'\n')
     prepared = {'source': str(source), 'output': str(output), 'publication_manifest': str(manifest),
         'coordinate_delivery': delivery, 'target_views': bindings, 'renderer_commit': plan['renderer_commit']}

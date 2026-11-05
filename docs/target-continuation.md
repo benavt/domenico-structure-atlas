@@ -105,3 +105,29 @@ previous attempts plus this allowance total 43, including the aborted UMAP.
 Keep the existing memory/no-swap/CPU/pressure controls and 50 GiB SSD reserve;
 the reviewed plan must also bind the additional SSD workspace allowance.
 Final model selection and reports follow a separate plan based on actual groups.
+
+The protected SERCA retry also stopped during a later UMAP allocation after
+16 minutes, at 28.002 GiB of charged memory. Host available memory remained
+over 30 GiB, with no OOM or job swap. This identifies local memory-high reclaim
+and its resulting stalls; SSD staging alone did not remove native UMAP copies.
+All originals, PCA and 5NTase results remain preserved; the interrupted UMAP
+is charged, bringing the completed/attempted projection count to 24.
+
+`scripts/umap_memory.py` is a source candidate, not yet integrated into scientific
+workflows. Its audited large dense Euclidean route uses UMAP's public native
+precomputed-neighbor API and the same advanced random state to avoid one
+retained input copy. Small or unsupported cases retain ordinary behavior.
+It does not patch the environment, remove all UMAP copies or guarantee a peak.
+`scripts/validate_umap_memory.py` requires an exact protected synthetic plan
+before its 14 parity/memory fits; it compares native neighbors, graphs,
+coordinates, random-state consumption and input ownership, and reports actual
+RSS and timing. Successful validation never authorizes a SERCA retry.
+
+The plan-driven `scripts/target_selection.py` prepares later target-specific
+selection stages from accepted clustering, original registries and explicit
+435/894-residue cores. Stages reuse native confidence/medoid, TM, Bonsai and
+sampling tools, preserve noise in state searches and copy frozen metrics before
+native loaders may migrate them. An approved outer launcher must supply fresh
+processes, controls and exact budgets. Generic public state attachment and final
+camera-dependent reports remain separate work. The publisher now describes the
+actual retained masks while retaining its full-construct coordinate/energy schema.
