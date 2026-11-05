@@ -204,6 +204,14 @@ class ScopeTests(unittest.TestCase):
             subject._stop_scope(self.binding, {}, run=run)
         self.assertEqual(run.call_count, 1)
 
+    def test_keeper_self_stop_accepts_only_expected_signal_results(self):
+        for code in (-signal.SIGTERM,-signal.SIGKILL):
+            def fake():return Mock(side_effect=[SimpleNamespace(returncode=0,stdout='LoadState=loaded\nControlGroup='+self.binding['scope_cgroup']),SimpleNamespace(returncode=code,stdout='')])
+            subject._stop_scope(self.binding,{},run=fake(),self_stop=True)
+            with self.assertRaises(ValueError):subject._stop_scope(self.binding,{},run=fake())
+        run=Mock(side_effect=[SimpleNamespace(returncode=0,stdout='LoadState=loaded\nControlGroup='+self.binding['scope_cgroup']),SimpleNamespace(returncode=1,stdout='')])
+        with self.assertRaises(ValueError):subject._stop_scope(self.binding,{},run=run,self_stop=True)
+
     def test_absent_scope_cleanup_never_stops_parent_user_manager(self):
         run = Mock(return_value=SimpleNamespace(returncode=4, stdout='LoadState=not-found'))
         subject._stop_scope(self.binding, {}, run=run)
@@ -221,7 +229,7 @@ class ScopeTests(unittest.TestCase):
                 cpu = Mock()
                 cpu.bound.return_value = self.root / 'scoped.sbatch'
                 cleanup = Mock()
-                cleanup.side_effect = lambda *args: self.assertEqual(
+                cleanup.side_effect = lambda *args, **kwargs: self.assertEqual(
                     json.loads((self.root / 'scope-workload-exit.json').read_text())['workload_returncode'], code)
                 with patch.object(subject, '_load', return_value=(self.path, self.plan, contract)), \
                         patch.object(subject, '_read_binding', return_value=self.binding), \

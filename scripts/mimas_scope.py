@@ -235,7 +235,7 @@ def _verify_caps(binding, plan, *, cgroup_root=CGROUP_ROOT, configure_oom=False)
     return leaf
 
 
-def _stop_scope(binding, env, *, run=subprocess.run):
+def _stop_scope(binding, env, *, run=subprocess.run, self_stop=False):
     # Never stop the user manager, a slice, an ancestor, or an arbitrary name.
     expected = '/user.slice/user-{0}.slice/user@{0}.service/app.slice/{1}'.format(binding['uid'], binding['unit'])
     need(binding['scope_cgroup'] == expected and binding['unit'].startswith('domenico-cpu-')
@@ -253,7 +253,11 @@ def _stop_scope(binding, env, *, run=subprocess.run):
          'Cannot prove the exact unit to clean up')
     result = run([SYSTEMCTL, '--user', '--no-ask-password', 'stop', binding['unit']],
                  env=env, capture_output=True, text=True, timeout=15, check=False)
-    need(result.returncode == 0, 'Exact private scope did not stop')
+    # A keeper's systemctl child is itself inside the scope being stopped.
+    # SIGTERM/SIGKILL here is expected; the outside supervisor still verifies
+    # cleanup independently. Other errors retain their ordinary failure status.
+    need(result.returncode == 0 or self_stop and result.returncode in (-signal.SIGTERM, -signal.SIGKILL),
+         'Exact private scope did not stop')
 
 
 def _pidfd_open(pid):
@@ -390,7 +394,7 @@ def keeper(plan_path, binding_path, binding_sha):
         # may terminate the keeper itself; the still-in-Slurm supervisor also
         # performs the same exact-scope cleanup when systemd-run returns.
         try:
-            _stop_scope(binding, env)
+            _stop_scope(binding, env, self_stop=True)
         finally:
             if handle is not None:
                 os.close(handle)
