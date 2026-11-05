@@ -138,11 +138,14 @@ def registry(plan, manifest, study, check, checkpoint=lambda _: None):
     return names, members, [by_label[name] for name in names]
 
 
-def write_density_labels(result, primary, output):
+def write_density_labels(result, primary, output, *, maximum_clusters=732):
     """Keep every model including explicit noise; only assigned groups get poses."""
     from src.analysis.hierarchical_colors import lineage_palette
     names, labels = result['models'], result['density']
-    need(0 < len({label for label in labels if not label.endswith('.unassigned')}) <= 732,
+    need(len(names) == len(labels) == len(primary) and len(set(names)) == len(names)
+         and [row['model'] for row in primary] == names, 'Density label population/order differs')
+    need(type(maximum_clusters) is int and maximum_clusters >= 1
+         and 0 < len({label for label in labels if not label.endswith('.unassigned')}) <= maximum_clusters,
          'Assigned density cluster count exceeds the frozen envelope')
     colors = lineage_palette(labels)
     path = Path(output)/'labels.csv'; assigned = Path(output)/'assigned-labels.csv'

@@ -33,6 +33,21 @@ model. Four residue-level linkage calculations are disclosed for the two
 single-chain targets; this stage fits no model projections and runs no native TM,
 scoring, molecular export or public deployment.
 
+The accepted 2026-11-04 screen selects canonical positions 4–438 for 5NTase
+(435 of 523 residues) and 58–951 for SERCA (894 of 993). Both cuts come from the
+standard core-anchor boundary rule; the direct 60% distant-pair rule flags no
+residues. Internal residues remain included. These changed masks require fresh
+projections; the previous full-construct 5NTase projections remain preserved.
+
+The continuation adapter stages only exact selected float16 pairs from the
+verified stored caches and uses public native projection workers. It verifies
+metadata assignments before any worker can invoke its legacy coordinate-rebuild
+fallback. The first continuation stage computes primary projections/labels and
+recursive HDBSCAN labels, retaining all points and explicit noise. Its maximum
+is 42 projection fits and 60 HDBSCAN extractions across both targets; it performs
+no native TM calls, coordinate parsing, model exports or deployment. Actual
+cluster counts determine the following representative/state/report plan.
+
 After masks are accepted, calculate the actual feature/RAM envelope and freeze
 the clustering/model-selection continuation. Reuse 5NTase projections only with
 the identical ordered feature mask; a changed mask needs new projections.
