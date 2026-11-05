@@ -7,6 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def validate_construct(sequence, coordinate_count, expected):
+    chains = sequence.subsequences
+    if len(chains) != 1 or chains[0].sequence != expected or coordinate_count != len(expected):
+        raise ValueError('Native model does not match the exact single-chain target construct')
+
+
 def load_intake(path):
     from snapshot import sha256, verify
     path = Path(path).resolve()
@@ -82,6 +88,10 @@ def screen(intake, source, output):
     output.mkdir(parents=True)
     inventory, parsed = prepare_workflow_inputs(source, output, coordinate_loader=get_selected_atoms,
                                               chain_mapping=intake.get('chain_mapping'))
+    study = json.loads((ROOT / 'config/study.json').read_text())
+    expected = study['targets'][intake['target']]['sequence']
+    for sequence, coordinates in parsed.values():
+        validate_construct(sequence, len(coordinates), expected)
     distograms = output / 'distograms'
     errors = []
     worker = DistogramWorker('', str(source), str(distograms), identifier=intake['target'],
