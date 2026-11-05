@@ -209,8 +209,8 @@ def _density(plan,context,manifest,matrix,proof,funcs,check,log):
 def run_stage(stage,plan,context,*,check,log,adapters=None):
     """Called once by the parent after exact approval and child control checks."""
     need(stage in STAGES and callable(check) and callable(log),'Explicit stage/check/log required')
-    import numpy as np
     tmpdir=assert_ssd_tmpdir(stage,plan,context)  # Must precede native imports.
+    import numpy as np
     funcs=adapters_for_native() if adapters is None else dict(adapters)
     desc=context['descriptor'];path=Path(context['newprimary_manifest']).absolute();root=Path(plan['run_root']).absolute()
     need(path.is_relative_to(root) and path.is_file() and not any(p.is_symlink() for p in [path,*path.parents]),

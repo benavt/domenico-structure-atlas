@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import csv
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -122,6 +123,7 @@ class StageTests(unittest.TestCase):
         with patch.dict(os.environ,TMPDIR=context['stage_tmpdirs'][stage]),patch.object(stage_adapter,'assert_ssd_tmpdir',return_value=Path(context['stage_tmpdirs'][stage])):
             return stage_adapter.run_stage(stage,plan,context,check=lambda:None,log=lambda _:None,adapters=adapters)
 
+    @unittest.skipUnless(importlib.util.find_spec('numpy'),'Optional NumPy for static array fixtures')
     def test_all_four_stages_preserve_PCA_and_reuse_selected_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);plan,context,adapters,state,proof=self.fixture(root)
@@ -146,6 +148,7 @@ class StageTests(unittest.TestCase):
                 for row in receipt['outputs']:self.assertEqual(stage_adapter.record(row['path']),row)
             snapshot=density['primary_manifest'];self.assertEqual(stage_adapter.record(snapshot['path']),snapshot)
 
+    @unittest.skipUnless(importlib.util.find_spec('numpy'),'Optional NumPy for static array fixtures')
     def test_failed_stage_closes_map_and_never_marks_completion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);plan,context,adapters,state,_=self.fixture(root);state['fail']='umap'
@@ -153,6 +156,7 @@ class StageTests(unittest.TestCase):
             self.assertEqual(state['mapped'],state['unmapped']);self.assertFalse((root/'primary/checkpoints/umap.json').exists())
             self.assertFalse((root/'primary/manifest.json').exists());self.assertTrue((root/'primary/checkpoints/pca.json').is_file())
 
+    @unittest.skipUnless(importlib.util.find_spec('numpy'),'Optional NumPy for static array fixtures')
     def test_labels_require_verified_all_methods_and_new_HTML_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);plan,context,adapters,state,_=self.fixture(root)
