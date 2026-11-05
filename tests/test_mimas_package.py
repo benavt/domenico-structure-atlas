@@ -59,6 +59,18 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('-m venv', existing)
         self.assertNotIn('pip install', existing)
 
+    def test_scoped_batch_enters_scope_before_any_environment_creation(self):
+        plan = {'run_root':'/run/new','runtime_prefix':'/runtime/new','runtime_python':'/runtime/new/bin/python',
+                'wheelhouse':'/payload/wheels','requirements':'/payload/requirements.txt','runner':'/source/mimas_cpu.py',
+                'partition':'debug','resources':{'maximum_cpus':1,'maximum_memory_bytes':8*1024**3,'maximum_wall_seconds':3600},
+                'containment':{'mode':'user_scope'}}
+        body=package.smoke_batch('/payload/plan.json',plan,'/base/bin/python')
+        self.assertIn('mimas_scope.py launch',body);self.assertIn('#SBATCH --no-requeue',body)
+        self.assertNotIn('pip install',body);self.assertNotIn('-m venv',body)
+        plain=dict(plan);plain.pop('containment')
+        inner=package.smoke_batch('/payload/plan.json',plain,'/base/bin/python')
+        self.assertNotIn('mimas_scope.py',inner);self.assertIn('-m venv',inner)
+
     def test_batch_rejects_injection_and_unbounded_requests(self):
         plan = {'run_root': '/run/new', 'runtime_prefix': '/runtime/new',
                 'runtime_python': '/runtime/new/bin/python', 'wheelhouse': '/payload/wheels',

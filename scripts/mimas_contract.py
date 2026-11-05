@@ -1,5 +1,7 @@
 """Read-only Slurm containment evidence; observations never authorize a fit."""
 import math
+import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -43,6 +45,12 @@ def _plan(plan):
     resources = plan['resources']
     for key in ('maximum_cpus', 'maximum_memory_bytes', 'maximum_pids'):
         _need(type(resources[key]) is int and resources[key] > 0, 'Positive integer resource required: ' + key)
+    if 'maximum_allocated_logical_cpus' in resources or 'maximum_physical_cores' in resources:
+        for key in ('maximum_allocated_logical_cpus', 'maximum_physical_cores'):
+            _need(type(resources.get(key)) is int and resources[key] > 0,
+                  'Explicit positive topology budget required: ' + key)
+        _need(resources['maximum_physical_cores'] <= resources['maximum_allocated_logical_cpus'],
+              'Physical-core budget exceeds logical-CPU allowance')
     _need(type(resources['maximum_swap_bytes']) is int and resources['maximum_swap_bytes'] >= 0,
           'Explicit nonnegative swap budget required')
     return root, python, prefix, resources
@@ -60,6 +68,10 @@ def sanitized_environment(plan, *, environ=None):
               for k, v in original.items()), 'Environment must contain NUL-free strings')
     keep = {'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SLURM_CONF'}
     result = {k: v for k, v in original.items() if k in keep or k.startswith('SLURM_')}
+    if plan.get('containment', {}).get('mode') == 'user_scope':
+        for key in ('MIMAS_SCOPE_BINDING', 'MIMAS_SCOPE_BINDING_SHA256'):
+            if key in original:
+                result[key] = original[key]
     result.update(PATH=str(python.parent) + ':/usr/bin:/bin', PYTHONNOUSERSITE='1',
                   PYTHONDONTWRITEBYTECODE='1', PYTHONUNBUFFERED='1', MPLBACKEND='Agg',
                   QT_QPA_PLATFORM='offscreen', STRUCTURE_CLUSTERING_TSNE_IMPL='python',
@@ -185,7 +197,39 @@ def _cpus(value):
     return result
 
 
-def _cpu_evidence(locations, process, maximum):
+def _topology(cpus, root):
+    groups = {}
+    for number in sorted(cpus):
+        directory = root / ('cpu' + str(number)) / 'topology'
+        values = [_text(directory / name) for name in ('physical_package_id', 'core_id')]
+        if any(v is None or not v.isdecimal() for v in values):
+            return None
+        package, core = map(int, values)
+        groups.setdefault((package, core), []).append(number)
+    return [dict(package=package, core=core, logical_cpus=members)
+            for (package, core), members in sorted(groups.items())]
+
+
+def _cpuset_ready(cpus, resources, topology):
+    if not isinstance(cpus, list) or not cpus or len(set(cpus)) != len(cpus):
+        return False
+    if any(type(i) is not int or i < 0 for i in cpus):
+        return False
+    if 'maximum_allocated_logical_cpus' not in resources:
+        return len(cpus) <= resources['maximum_cpus']
+    if len(cpus) > resources['maximum_allocated_logical_cpus'] or not isinstance(topology, list):
+        return False
+    try:
+        pairs = [(row['package'], row['core']) for row in topology]
+        members = [i for row in topology for i in row['logical_cpus']]
+        return (0 < len(pairs) <= resources['maximum_physical_cores']
+                and len(set(pairs)) == len(pairs) and sorted(members) == sorted(cpus)
+                and all(type(n) is int and n >= 0 for pair in pairs for n in pair))
+    except (KeyError, TypeError):
+        return False
+
+
+def _cpu_evidence(locations, process, resources, sys_cpu_root):
     cpu = _controller(locations, 'cpu', 'cpu.max')
     unified = cpu is not None and cpu['version'] == 2
     quotas = []
@@ -221,15 +265,80 @@ def _cpu_evidence(locations, process, maximum):
     affinity_line = next((line.split(':', 1)[1].strip() for line in status.splitlines()
                           if line.startswith('Cpus_allowed_list:')), None)
     affinity = _cpus(affinity_line)
-    verified = (quota is not None and 0 < quota <= maximum
-                or effective is not None and 0 < len(effective) <= maximum)
+    topology = (_topology(effective, sys_cpu_root) if effective is not None
+                and 'maximum_allocated_logical_cpus' in resources
+                and len(effective) <= resources['maximum_allocated_logical_cpus'] else None)
+    cpuset_ok = _cpuset_ready(sorted(effective) if effective else None, resources, topology)
+    quota_ok = quota is not None and 0 < quota <= resources['maximum_cpus']
+    verified = quota_ok or cpuset_ok
     return dict(verified=bool(verified), effective_quota_cpus=quota, quota_records=quotas,
                 effective_cpuset=sorted(effective) if effective is not None else None,
+                physical_cores=topology,
+                verification_basis='quota' if quota_ok else ('cpuset' if cpuset_ok else None),
                 process_affinity=sorted(affinity) if affinity is not None else None)
 
 
+def _scope_binding(plan, env, process, proc_root, cgroup_root, sys_cpu_root, cpu):
+    """Verify affinity against a live Slurm allocation outside this user scope.
+
+    The user manager delegates memory/pids, not CPU. CPU placement is enforced
+    by inherited kernel affinity and checked against the still-live allocation;
+    this is recorded separately from a private cgroup cpuset/quota.
+    """
+    try:
+        expected = _unlinked(_absolute(plan['plan_directory'])/'scope-binding.json')
+        _need(env.get('MIMAS_SCOPE_BINDING') == str(expected), 'Missing exact scope binding path')
+        raw = expected.read_bytes();digest = hashlib.sha256(raw).hexdigest()
+        _need(env.get('MIMAS_SCOPE_BINDING_SHA256') == digest, 'Scope binding hash differs')
+        binding = json.loads(raw)
+        plan_path = expected.with_name('execution-plan.json')
+        _need(binding['plan_sha256'] == hashlib.sha256(plan_path.read_bytes()).hexdigest(), 'Scope plan differs')
+        uid = os.getuid();job = env.get('SLURM_JOB_ID')
+        _need(binding['uid'] == uid and str(binding['job_id']) == job, 'Scope job/owner differs')
+        unit = 'domenico-cpu-'+job+'-'+binding['plan_sha256'][:8]+'.scope'
+        scope = '/user.slice/user-'+str(uid)+'.slice/user@'+str(uid)+'.service/app.slice/'+unit
+        slurm = '/system.slice/slurmstepd.scope/job_'+job+'/step_batch/user/task_0'
+        _need(binding['unit'] == unit and binding['scope_cgroup'] == scope
+              and binding['slurm_cgroup'] == slurm, 'Scope or allocation path differs')
+        _need(_text(process/'cgroup') == '0::'+scope, 'Worker is outside its private scope')
+        private = cgroup_root/scope.lstrip('/')
+        for name, value in (('memory.max',plan['containment']['scope_memory_bytes']),
+                            ('memory.swap.max',0),('pids.max',plan['containment']['scope_tasks']),
+                            ('memory.oom.group',1)):
+            _need(_text(private/name) == str(value), 'Private scope control differs: '+name)
+        parent_id = binding['supervisor_pid'];_need(type(parent_id) is int and parent_id > 0, 'Invalid supervisor PID')
+        parent = proc_root/str(parent_id)
+        _need(_text(parent/'cgroup') == '0::'+slurm, 'Slurm supervisor left its allocation')
+        start = _text(parent/'stat').rsplit(')',1)[1].split()[19]
+        _need(str(binding['supervisor_start_time']) == start, 'Slurm supervisor PID was reused')
+        status = _text(parent/'status') or ''
+        owner = next((l.split(':',1)[1].split() for l in status.splitlines() if l.startswith('Uid:')), [])
+        _need(owner == [str(uid)]*4, 'Slurm supervisor owner differs')
+        cursor = int(process.name);seen = set()
+        for _ in range(64):
+            if cursor == parent_id:
+                break
+            _need(cursor > 1 and cursor not in seen, 'Worker is not a supervisor descendant')
+            seen.add(cursor)
+            text = _text(proc_root/str(cursor)/'status') or ''
+            parent_line = next((l.split(':',1)[1].strip() for l in text.splitlines() if l.startswith('PPid:')), '')
+            _need(parent_line.isdecimal(), 'Missing worker parent identity');cursor = int(parent_line)
+        _need(cursor == parent_id, 'Worker ancestry exceeds its scope')
+        allocation = _cpus(_text(cgroup_root/slurm.lstrip('/')/'cpuset.cpus.effective'))
+        cpus = binding['cpus'];_need(isinstance(cpus,list) and cpus == sorted(allocation or []), 'Allocated CPUs changed')
+        topology = _topology(set(cpus),sys_cpu_root)
+        _need(_cpuset_ready(cpus,plan['resources'],topology), 'Allocated topology exceeds its budget')
+        affinity = cpu['process_affinity']
+        _need(affinity and set(affinity) <= set(cpus), 'Worker affinity escaped its Slurm allocation')
+        return dict(verified=True,binding_sha256=digest,unit=unit,supervisor_pid=parent_id,
+                    allocation_cpus=cpus,physical_cores=topology,scope_cgroup=scope)
+    except (KeyError, OSError, ValueError, TypeError, AttributeError, IndexError) as error:
+        return dict(verified=False,reason=str(error))
+
+
 def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgroup',
-            pid=None, runtime_python=None, runtime_prefix=None):
+            pid=None, runtime_python=None, runtime_prefix=None,
+            sys_cpu_root='/sys/devices/system/cpu'):
     """Read current Slurm/kernel evidence; report unknowns without inventing caps."""
     _, python, prefix, resources = _plan(plan)
     env = dict(os.environ if environ is None else environ)
@@ -259,7 +368,16 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
     memory_verified = memory_limit is not None and 0 < memory_limit <= resources['maximum_memory_bytes']
     if not memory_verified:
         issues.append('Finite effective cgroup RAM enforcement within the approved budget is unverified')
-    cpu = _cpu_evidence(locations, process, resources['maximum_cpus'])
+    cpu = _cpu_evidence(locations, process, resources, _unlinked(_absolute(sys_cpu_root)))
+    scope = None
+    if plan.get('containment', {}).get('mode') == 'user_scope':
+        scope = _scope_binding(plan,env,process,_absolute(proc_root),root,_absolute(sys_cpu_root),cpu)
+        if scope['verified']:
+            cpu.update(verified=True,verification_basis='live_allocation_affinity',
+                       physical_cores=scope['physical_cores'],scope_binding=scope)
+        else:
+            cpu['verified'] = False
+            issues.append('Private user-scope/allocation binding is unverified: '+scope['reason'])
     if not cpu['verified']:
         issues.append('Effective CPU quota/cpuset within the approved budget is unverified')
     if unified:
@@ -346,9 +464,14 @@ def require_fit_ready(observation, *, require_actual_environment=True):
           and type(pids['current']) is int and 0 <= pids['current'] <= pids['limit'],
           'Scientific fits blocked: swap/PID evidence differs')
     cpu = observation['cpu']; quota = cpu['effective_quota_cpus']; cpuset = cpu['effective_cpuset']
+    bound_affinity = cpu.get('scope_binding', {})
     _need((type(quota) in (int, float) and math.isfinite(quota)
            and 0 < quota <= resources['maximum_cpus'])
-          or (isinstance(cpuset, list) and 0 < len(set(cpuset)) <= resources['maximum_cpus']
-              and all(type(i) is int and i >= 0 for i in cpuset)),
+          or _cpuset_ready(cpuset, resources, cpu.get('physical_cores'))
+          or (cpu.get('verification_basis') == 'live_allocation_affinity'
+              and bound_affinity.get('verified') is True
+              and _cpuset_ready(bound_affinity.get('allocation_cpus'),resources,cpu.get('physical_cores'))
+              and cpu.get('process_affinity')
+              and set(cpu['process_affinity']) <= set(bound_affinity['allocation_cpus'])),
           'Scientific fits blocked: CPU containment differs')
     return observation

@@ -1,5 +1,7 @@
 """Fake Slurm/proc/controller trees only: no real jobs, engines or inputs."""
 from copy import deepcopy
+import json
+import hashlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -211,6 +213,77 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(original['DATA_PROCESSED'],'/pax/old')
             plan['run_root']=str(Path(tmp)/'../escape')
             with self.assertRaises(ValueError):contract.sanitized_environment(plan,environ=original)
+
+    def test_smt_siblings_use_explicit_physical_and_logical_budgets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);args=self.fixture(root);plan,env,proc,cg,leaves=args
+            plan['resources'].update(maximum_allocated_logical_cpus=2,maximum_physical_cores=1)
+            leaf=leaves['unified'];(leaf/'cpu.max').write_text('max 100000')
+            (leaf/'cpuset.cpus.effective').write_text('12,60')
+            sysroot=root/'syscpu'
+            for cpu in (12,60):
+                folder=sysroot/('cpu'+str(cpu))/'topology';folder.mkdir(parents=True)
+                (folder/'physical_package_id').write_text('0');(folder/'core_id').write_text('12')
+            def observed():
+                with patch.object(contract.sys,'flags',SimpleNamespace(no_user_site=1)),patch.dict(contract.os.environ,env,clear=True):
+                    return contract.observe(plan,proc_root=proc,cgroup_root=cg,pid=123,
+                        sys_cpu_root=sysroot,runtime_python=plan['runtime_python'],runtime_prefix=plan['runtime_prefix'])
+            result=observed();self.assertTrue(result['cpu']['verified']);contract.require_fit_ready(result)
+            self.assertEqual(result['cpu']['physical_cores'],[dict(package=0,core=12,logical_cpus=[12,60])])
+            (sysroot/'cpu60/topology/core_id').write_text('13')
+            result=observed();self.assertFalse(result['cpu']['verified'])
+            with self.assertRaises(ValueError):contract.require_fit_ready(result)
+
+    def test_smt_allowance_never_accepts_missing_topology_or_an_extra_logical_cpu(self):
+        resources=dict(maximum_cpus=1,maximum_allocated_logical_cpus=2,maximum_physical_cores=1)
+        self.assertFalse(contract._cpuset_ready([12,60],resources,None))
+        self.assertFalse(contract._cpuset_ready([12,60,61],resources,[dict(package=0,core=12,logical_cpus=[12,60,61])]))
+        self.assertFalse(contract._cpuset_ready([12,60],resources,[dict(package=0,core=12,logical_cpus=[12,12])]))
+        self.assertFalse(contract._cpuset_ready([12,60],dict(maximum_cpus=1),None))
+
+    def test_partial_or_invalid_topology_budget_is_rejected(self):
+        for values in [dict(maximum_allocated_logical_cpus=2),dict(maximum_physical_cores=1),
+                       dict(maximum_allocated_logical_cpus=0,maximum_physical_cores=1)]:
+            with tempfile.TemporaryDirectory() as tmp:
+                args=self.fixture(Path(tmp));args[0]['resources'].update(values)
+                with self.assertRaises(ValueError):contract.sanitized_environment(args[0])
+
+    def test_user_scope_binds_live_slurm_ancestry_affinity_and_private_controls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);plan,env,proc,cg,leaves=self.fixture(root)
+            plan['resources'].update(maximum_allocated_logical_cpus=2,maximum_physical_cores=1)
+            plan['containment']=dict(mode='user_scope',scope_memory_bytes=4*GIB,scope_tasks=64)
+            folder=root/'plan';folder.mkdir();plan['plan_directory']=str(folder)
+            text=json.dumps(plan);(folder/'execution-plan.json').write_text(text);digest=hashlib.sha256(text.encode()).hexdigest()
+            uid=os.getuid();unit='domenico-cpu-771-'+digest[:8]+'.scope'
+            scope='/user.slice/user-'+str(uid)+'.slice/user@'+str(uid)+'.service/app.slice/'+unit
+            slurm='/system.slice/slurmstepd.scope/job_771/step_batch/user/task_0'
+            parent=proc/'99';parent.mkdir();(parent/'status').write_text('Uid: '+' '.join([str(uid)]*4)+'\nPPid: 1\n')
+            (parent/'stat').write_text('99 (supervisor) '+' '.join(['S']+['0']*18+['1234']))
+            (parent/'cgroup').write_text('0::'+slurm)
+            process=proc/'123';(process/'cgroup').write_text('0::'+scope);(process/'status').write_text('PPid: 99\n')
+            original=cg/slurm.lstrip('/');original.mkdir(parents=True);(original/'cpuset.cpus.effective').write_text('12,60')
+            private=cg/scope.lstrip('/');private.mkdir(parents=True)
+            for name,value in [('memory.max',4*GIB),('memory.swap.max',0),('pids.max',64),('memory.oom.group',1)]:
+                (private/name).write_text(str(value))
+            sysroot=root/'syscpu'
+            for number in (12,60):
+                topology=sysroot/('cpu'+str(number))/'topology';topology.mkdir(parents=True)
+                (topology/'physical_package_id').write_text('0');(topology/'core_id').write_text('12')
+            binding=dict(schema=1,plan_sha256=digest,supervisor_pid=99,supervisor_start_time='1234',
+                         slurm_cgroup=slurm,cpus=[12,60],unit=unit,scope_cgroup=scope,uid=uid,job_id='771')
+            path=folder/'scope-binding.json';path.write_text(json.dumps(binding))
+            env.update(MIMAS_SCOPE_BINDING=str(path),MIMAS_SCOPE_BINDING_SHA256=hashlib.sha256(path.read_bytes()).hexdigest())
+            cpu=dict(process_affinity=[12,60])
+            def observed():return contract._scope_binding(plan,env,process,proc,cg,sysroot,cpu)
+            self.assertTrue(observed()['verified'])
+            self.assertEqual(contract.sanitized_environment(plan,environ=env)['MIMAS_SCOPE_BINDING_SHA256'],env['MIMAS_SCOPE_BINDING_SHA256'])
+            for path,bad in [(private/'memory.max','max'),(private/'memory.oom.group','0'),
+                             (original/'cpuset.cpus.effective','12,61'),(process/'status','PPid: 1\n'),
+                             (parent/'cgroup','0::/foreign')]:
+                old=path.read_text();path.write_text(bad);self.assertFalse(observed()['verified']);path.write_text(old)
+            cpu['process_affinity']=[12,61];self.assertFalse(observed()['verified'])
+            cpu['process_affinity']=[12,60];env['MIMAS_SCOPE_BINDING_SHA256']='0'*64;self.assertFalse(observed()['verified'])
 
 
 if __name__=='__main__':

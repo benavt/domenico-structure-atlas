@@ -72,6 +72,20 @@ def verify(plan_path):
     for name in ('mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py'):
         if str(source / name) not in entries:
             raise ValueError('Controller dependency is not frozen: ' + name)
+    if plan.get('containment'):
+        scope = plan['containment']
+        if (scope.get('mode') != 'user_scope'
+                or str(source / 'mimas_scope.py') not in entries
+                or type(scope.get('scope_max_seconds')) is not int
+                or not 1 <= scope['scope_max_seconds'] <= plan['resources']['maximum_wall_seconds']
+                or type(scope.get('scope_memory_bytes')) is not int
+                or not 0 < scope['scope_memory_bytes'] <= plan['resources']['maximum_memory_bytes']
+                or type(scope.get('scope_tasks')) is not int
+                or not 0 < scope['scope_tasks'] <= plan['resources']['maximum_pids']):
+            raise ValueError('Unsupported private user-scope containment')
+        workload = bound(plan['scoped_workload'])
+        if str(workload) not in entries:
+            raise ValueError('Scoped workload is not frozen')
     root = Path(plan['run_root'])
     if (not root.is_absolute() or '..' in root.parts or
             any(p.is_symlink() for p in [root, *root.parents])):

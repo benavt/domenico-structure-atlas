@@ -78,3 +78,35 @@ This initial environment validates analysis only. PyMOL, US-align, Bonsai and th
 presentation renderer require their own pinned runtime checks before a complete
 report can be generated on Mimas. Existing approved Pax results and camera work
 remain available for later report assembly. No publication follows automatically.
+
+## Unprivileged job limits
+
+Mimas's user manager delegates the memory and process controllers. A transient
+`systemd-run --user --scope` therefore supplies a private kernel RAM limit,
+zero-swap limit and task limit without sudo or a scheduler reconfiguration.
+The no-fit Slurm migration probe 20478 verified a 128 MiB / zero-swap / 16-task
+scope and preserved its original process parent and Slurm CPU affinity.
+
+The corrected smoke uses `mimas_scope.py`: a supervisor remains in the Slurm
+batch task, and a scopekeeper runs the bound setup workload as its descendant.
+Fleet's process-tree monitor retains that ancestry. The keeper checks a kernel
+pidfd for supervisor death, arms a parent-death signal, and stops only its exact
+scope on cancellation or exit. A separate systemd runtime deadline provides a
+fallback; the private scope enables group-wide OOM killing. Actual workload
+return codes are retained separately from the unit's status.
+
+CPU, RAM and process controls have different meanings. `maximum_cpus` remains
+the Slurm request and each native worker remains single-threaded. An explicit
+one-physical-core/two-logical-CPU allowance accepts SMT siblings only after
+reading their topology. The user manager does not delegate the CPU controller:
+the workload uses inherited kernel affinity, checked against its live Slurm
+allocation and supervisor. This is recorded as allocation-bound affinity, not a
+private cgroup CPU quota. Missing or changed bindings block admission.
+
+The supervisor and whole-job monitor remain outside the workload scope; their
+small memory overhead must be recorded separately. The private cap does not
+make memory a scheduler-consumable resource on this CR_Core site, so concurrent
+production admission still needs a host-memory budget. No ancestor cgroup, UID
+limit, shared service or other job is modified. The earlier administrator-helper
+prototype is not used. Every new environment/fixture run still needs its exact
+approved plan; the migration probe grants no scientific execution authority.

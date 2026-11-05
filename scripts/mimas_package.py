@@ -110,6 +110,7 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
              '#SBATCH --cpus-per-task=' + str(cpus),
              '#SBATCH --mem=' + str((memory + 1024**2 - 1)//1024**2) + 'M',
              '#SBATCH --time=' + str(minutes), '#SBATCH --partition=' + partition,
+             '#SBATCH --no-requeue',
              'set -euo pipefail',
              'export PATH=/usr/bin:/bin',
              'unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT FLEET_MASK_RECIPE FLEET_MASK_INDEX',
@@ -118,6 +119,10 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
              'export PYTHONNOUSERSITE=1', 'export PIP_NO_INDEX=1',
              'export PIP_CONFIG_FILE=/dev/null',
              'export PIP_DISABLE_PIP_VERSION_CHECK=1', 'export PIP_NO_CACHE_DIR=1']
+    if plan.get('containment', {}).get('mode') == 'user_scope':
+        scope_runner = str(Path(plan['runner']).with_name('mimas_scope.py'))
+        lines += ['exec '+q(bootstrap_python)+' -I '+q(scope_runner)+' launch '+q(str(plan_path))]
+        return '\n'.join(lines)+'\n'
     if not environment_exists:
         temporary = str(Path(plan_path).parent / 'setup-tmp')
         lines += [q(bootstrap_python) + ' -I ' + q(plan['runner']) + ' setup-check ' + q(str(plan_path)),
