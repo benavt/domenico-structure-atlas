@@ -56,6 +56,14 @@ def _plan(plan):
     return root, python, prefix, resources
 
 
+def python_flags(plan):
+    """Isolated diagnostics read source, not an inherited bytecode cache."""
+    if plan.get('phase') == 'repro64':
+        root, _, _, _ = _plan(plan)
+        return ['-I','-B','-X','pycache_prefix='+str(root/'cache/python')]
+    return ['-I']
+
+
 def sanitized_environment(plan, *, environ=None):
     """Return a minimal child environment; create no directories or processes.
 
@@ -79,6 +87,15 @@ def sanitized_environment(plan, *, environ=None):
     result.update({key: '1' for key in THREAD_VARIABLES})
     for key, relative in WRITER_PATHS.items():
         result[key] = str(_unlinked(root / relative))
+    if plan.get('phase') == 'repro64':
+        profile = plan.get('diagnostic_profile')
+        _need(profile in ('native', 'generic-jit-v1'), 'Explicit diagnostic profile required')
+        if profile == 'generic-jit-v1':
+            result.update(NUMBA_CPU_NAME='generic', NUMBA_CPU_FEATURES='')
+        stage = plan.get('active_stage')
+        if stage is not None:
+            _need(stage in ('umap1', 'tsne1', 'umap2', 'tsne2'), 'Invalid diagnostic child stage')
+            result['DATA_PROCESSED'] = str(_unlinked(root / 'data/processed' / stage))
     return result
 
 
@@ -408,6 +425,8 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
                      and pids_usage is not None and pids_usage <= pids_limit)
     expected_environment = sanitized_environment(plan, environ=env)
     required_keys = set(WRITER_PATHS).union(THREAD_VARIABLES, {'PYTHONNOUSERSITE'})
+    if plan.get('phase') == 'repro64' and plan.get('diagnostic_profile') == 'generic-jit-v1':
+        required_keys.update(('NUMBA_CPU_NAME', 'NUMBA_CPU_FEATURES'))
     mismatched = sorted(key for key in required_keys if env.get(key) != expected_environment[key])
     unexpected = sorted(set(env).difference(expected_environment, {'PWD', 'SHLVL', '_'}))
     environment = dict(verified=not mismatched and not unexpected,

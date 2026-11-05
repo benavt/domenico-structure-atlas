@@ -217,7 +217,11 @@ def run_smoke(plan, output, check=lambda: None, *, adapters=None):
         if cli.get('analysis_runtime_check', True):
             probes.append(('check-runtime', '--analysis-only'))
         for arguments in probes:
-            command = [plan['runtime_python'], '-I', '-m', 'structure_clustering', *arguments]
+            flags = ['-I']
+            if plan.get('phase') == 'repro64':
+                import mimas_contract
+                flags = mimas_contract.python_flags(plan)
+            command = [plan['runtime_python'], *flags, '-m', 'structure_clustering', *arguments]
             def run(command=command, arguments=arguments):
                 result = adapters['run'](command, cwd=str(cwd), env=environment, capture_output=True, text=True, timeout=timeout, check=False)
                 row = dict(command=command, returncode=result.returncode, stdout=result.stdout[:65536], stderr=result.stderr[:65536])
