@@ -24,6 +24,7 @@ COLORS_SHA256 = '16ebe58a11bca716b867a8d23f29d58bb5aa47a93010774a6599763003bb57c
 SEEDS = (42, 7, 123)
 DIMENSION = 10
 MAX_REFINEMENTS = 5
+FLOAT32_HASH_BLOCK_BYTES = 16 * 1024**2
 _LOADS = itertools.count()
 
 
@@ -109,15 +110,37 @@ def _labels(values):
     return result, aliases
 
 
-def feature_proof(features, names, primary_labels, retained_positions=None, expected_sha256=None):
+def _stored_float16_sha256(matrix):
+    """Hash canonical float32 values with bounded casts, never a cohort copy."""
+    import numpy as np
+    digest = hashlib.sha256()
+    rows = max(1, FLOAT32_HASH_BLOCK_BYTES // (matrix.shape[1]*np.dtype(np.float32).itemsize))
+    for start in range(0, len(matrix), rows):
+        block = matrix[start:start+rows]
+        if not np.isfinite(block).all() or np.any(block < 0):
+            raise ValueError('Features must contain finite nonnegative raw Cα distances')
+        cast = np.asarray(block, dtype=np.float32, order='C')
+        digest.update(memoryview(cast).cast('B'))
+    return digest.hexdigest()
+
+
+def feature_proof(features, names, primary_labels, retained_positions=None, expected_sha256=None,
+                  *, allow_stored_float16=False):
+    """Legacy dtype/hash describe float32 native fits; stored_dtype records input storage."""
     import numpy as np
     from src.analysis.feature_workspace import row_blocks, feature_sha256
     matrix = np.asarray(features)
-    if (matrix.ndim != 2 or matrix.dtype != np.float32 or matrix.shape[0] != len(names)
+    if type(allow_stored_float16) is not bool:
+        raise ValueError('Stored float16 input requires an explicit boolean opt-in')
+    stored_float16 = matrix.dtype == np.float16 and allow_stored_float16
+    if (matrix.ndim != 2 or (matrix.dtype != np.float32 and not stored_float16)
+            or matrix.shape[0] != len(names)
             or not len(names) or len(set(names)) != len(names)
             or any(not isinstance(name, str) or not name.strip() or name != name.strip() for name in names)
             or len(primary_labels) != len(names) or matrix.shape[1] < 1):
         raise ValueError('Expected exact ordered unique model IDs and a raw float32 feature matrix')
+    if stored_float16 and (matrix.flags.writeable or not matrix.flags.c_contiguous):
+        raise ValueError('Stored float16 features must be read-only and C-contiguous')
     labels, aliases = _labels(primary_labels)
     positions = None if retained_positions is None else list(retained_positions)
     if positions is not None:
@@ -125,13 +148,17 @@ def feature_proof(features, names, primary_labels, retained_positions=None, expe
                 or any(type(p) is not int or p < 0 for p in positions)
                 or matrix.shape[1] != len(positions)*(len(positions)-1)//2):
             raise ValueError('Feature width differs from the frozen canonical Cα selection')
-    for block in row_blocks(matrix):
-        if not np.isfinite(block).all() or np.any(block < 0):
-            raise ValueError('Features must contain finite nonnegative raw Cα distances')
-    digest = feature_sha256(matrix)
+    if stored_float16:
+        digest = _stored_float16_sha256(matrix)
+    else:
+        for block in row_blocks(matrix):
+            if not np.isfinite(block).all() or np.any(block < 0):
+                raise ValueError('Features must contain finite nonnegative raw Cα distances')
+        digest = feature_sha256(matrix)
     if expected_sha256 is not None and digest != expected_sha256:
         raise ValueError('Frozen feature values or row order changed')
     return matrix, labels, aliases, dict(shape=list(matrix.shape), dtype='float32',
+        stored_dtype=str(matrix.dtype), fit_dtype='float32',
         feature_sha256=digest, model_order_sha256=_json_sha(names),
         primary_partition_sha256=_json_sha(primary_labels),
         retained_reference_positions=positions,
@@ -189,12 +216,14 @@ def _fit_result(directory, names, indices, settings):
 
 def run(features, names, primary_labels, output, *, native_source,
         mode='casp17_recursive', retained_positions=None, expected_feature_sha256=None,
-        workers=4, log=lambda _: None, check=lambda: None):
+        workers=4, log=lambda _: None, check=lambda: None, allow_stored_float16=False):
     """Fit density labels only; all new scientific execution needs caller approval.
 
     CASP17 mode mirrors only its genuine largest-leaf inference loop. There are
     no invented matched-child populations, 20D comparisons or landmark scores.
     Global mode makes one all-cohort 10D selection and retains all native noise.
+    The opt-in stored-float16 path hashes float32 values in bounded blocks and
+    casts only each selected fit workspace; native inference still sees float32.
     """
     import numpy as np
     from src.analysis.feature_workspace import feature_input_workspace, feature_sha256
@@ -209,7 +238,7 @@ def run(features, names, primary_labels, output, *, native_source,
     if output.exists() or any(p.is_symlink() for p in [output, *output.parents]):
         raise FileExistsError('Use a fresh immutable output directory; no automatic retry')
     matrix, current, aliases, proof = feature_proof(features, names, primary_labels,
-        retained_positions, expected_feature_sha256)
+        retained_positions, expected_feature_sha256, allow_stored_float16=allow_stored_float16)
     native, provider = load_native(native_source)
     output.mkdir(parents=True)
     settings = dict(seeds=list(SEEDS), n_neighbors=30, min_dist=0.,

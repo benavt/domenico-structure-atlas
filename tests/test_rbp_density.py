@@ -1,5 +1,6 @@
 """Density adapter checks use saved tiny arrays and a mocked native fitter only."""
 import importlib.util
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sys
@@ -90,6 +91,112 @@ class DensityAdapterTests(unittest.TestCase):
     def invoke(self, backend, matrix, names, primary, output, **kwargs):
         with patch.object(adapter, 'load_native', return_value=(backend, dict(sha256=adapter.NATIVE_SHA256))):
             return adapter.run(matrix, names, primary, output, native_source={}, retained_positions=[0, 1, 2], **kwargs)
+
+    def test_stored_float16_proof_matches_float32_hash_in_bounded_blocks(self):
+        import numpy as np
+        from src.analysis.feature_workspace import feature_sha256
+        _, names = self.inputs(37)
+        values = (np.arange(37*3, dtype=np.float16).reshape(37,3)/np.float16(7))
+        values.flat[1]=np.float16(65504)
+        values.flat[2]=np.nextafter(np.float16(0),np.float16(1))
+        values.flat[3]=np.float16(-0.)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'stored.npy'; np.save(path,values,allow_pickle=False)
+            stored = np.load(path,mmap_mode='r',allow_pickle=False)
+            try:
+                explicit = np.asarray(stored,dtype=np.float32)
+                expected = feature_sha256(explicit)
+                _, _, _, baseline = adapter.feature_proof(explicit,names,['C1']*37,[0,1,2])
+                asarray = np.asarray; cast_rows = []
+                def bounded_cast(value,*args,**kwargs):
+                    if kwargs.get('dtype') is np.float32:
+                        cast_rows.append(len(value)); self.assertLessEqual(len(value),7)
+                    return asarray(value,*args,**kwargs)
+                with patch.object(adapter,'FLOAT32_HASH_BLOCK_BYTES',7*3*4), \
+                        patch.object(np,'asarray',side_effect=bounded_cast), \
+                        patch('src.analysis.feature_workspace.feature_sha256',side_effect=AssertionError('No full-cohort float32 hash workspace')):
+                    matrix, labels, aliases, proof = adapter.feature_proof(stored,names,['C1']*37,
+                        [0,1,2],expected,allow_stored_float16=True)
+                self.assertEqual(cast_rows,[7,7,7,7,7,2])
+                self.assertTrue(np.shares_memory(matrix,stored))
+                self.assertFalse(matrix.flags.writeable)
+                self.assertEqual(matrix.dtype,np.float16)
+                self.assertEqual(proof['feature_sha256'],baseline['feature_sha256'])
+                self.assertEqual(proof['model_order_sha256'],baseline['model_order_sha256'])
+                self.assertEqual((proof['stored_dtype'],proof['fit_dtype'],proof['dtype']),('float16','float32','float32'))
+                self.assertEqual(proof['retained_reference_positions'],[0,1,2])
+            finally:stored._mmap.close()
+
+    def test_stored_float16_and_explicit_float32_have_identical_native_fits_and_results(self):
+        import numpy as np
+        from src.analysis import feature_workspace
+        _, names = self.inputs()
+        values = np.arange(90*3,dtype=np.float16).reshape(90,3)/np.float16(7)
+        primary = ['Cluster 1']*60+['Cluster 2']*30
+        labels = lambda count,call:[0]*20+[1]*20+[2]*19+[-1] if call==1 else [0]*15+[1]*15
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);np.save(root/'stored.npy',values,allow_pickle=False)
+            stored=np.load(root/'stored.npy',mmap_mode='r',allow_pickle=False)
+            explicit=np.asarray(stored,dtype=np.float32)
+            try:
+                baseline_backend=SavedFixtureBackend(labels,mutate=True)
+                baseline=self.invoke(baseline_backend,explicit,names,primary,root/'f32')
+                staged=[];workspace=feature_workspace.feature_input_workspace
+                @contextmanager
+                def selected_workspace(matrix,*,indices=None,dtype=None):
+                    self.assertEqual(matrix.dtype,np.float16)
+                    self.assertFalse(matrix.flags.writeable)
+                    self.assertIsNotNone(indices)  # No extra global float32 workspace.
+                    self.assertEqual(dtype,np.float32)
+                    staged.append(indices.tolist())
+                    with workspace(matrix,indices=indices,dtype=dtype,threshold_bytes=1) as selected:
+                        self.assertEqual(selected.dtype,np.float32)
+                        self.assertTrue(selected.flags.c_contiguous and selected.flags.writeable)
+                        yield selected
+                backend=SavedFixtureBackend(labels,mutate=True)
+                with patch.object(feature_workspace,'feature_input_workspace',side_effect=selected_workspace):
+                    result=self.invoke(backend,stored,names,primary,root/'f16',allow_stored_float16=True,
+                        expected_feature_sha256=baseline['feature_proof']['feature_sha256'])
+                self.assertEqual(staged,[list(range(60)),list(range(60,90))])
+                self.assertEqual(len(backend.calls),len(baseline_backend.calls))
+                for actual,expected in zip(backend.calls,baseline_backend.calls):
+                    np.testing.assert_array_equal(actual['indices'],expected['indices'])
+                    np.testing.assert_array_equal(actual['values'],expected['values'])
+                    self.assertEqual(actual['settings'],expected['settings'])
+                    self.assertEqual(actual['dimension'],expected['dimension'])
+                for key in ('models','primary','density','primary_label_map','stopping','inference_settings',
+                            'selected_fits','UMAP_fits','HDBSCAN_extractions','structural_clusters','unassigned_models'):
+                    self.assertEqual(result[key],baseline[key])
+                self.assertEqual([{k:v for k,v in row.items() if k!='fit'} for row in result['history']],
+                                 [{k:v for k,v in row.items() if k!='fit'} for row in baseline['history']])
+                for actual,expected in zip(result['selections'],baseline['selections']):
+                    for key in ('selected_indices','models','feature_sha256','diagnostics'):
+                        self.assertEqual(actual[key],expected[key])
+                np.testing.assert_array_equal(stored,values)
+                np.testing.assert_array_equal(explicit,values.astype(np.float32))
+            finally:stored._mmap.close()
+
+    def test_stored_float16_requires_opt_in_readonly_layout_and_valid_values(self):
+        import numpy as np
+        _,names=self.inputs(30)
+        base=np.arange(90,dtype=np.float16).reshape(30,3)
+        cases=[(base.copy(),True),(np.asfortranarray(base),True),
+               (np.repeat(base,2,axis=1)[:,::2],True),(base.astype(np.float64),True),
+               (base.copy(),False),(base.copy(),1)]
+        for value in (np.nan,np.inf,-1):
+            invalid=base.copy();invalid[0,0]=value;invalid.flags.writeable=False
+            cases.append((invalid,True))
+        for index,(matrix,allow) in enumerate(cases):
+            if index:matrix.flags.writeable=False
+            with self.subTest(index=index),tempfile.TemporaryDirectory() as tmp:
+                backend=SavedFixtureBackend(lambda count,call:[])
+                with self.assertRaises(ValueError):
+                    self.invoke(backend,matrix,names,['C1']*30,Path(tmp)/'out',allow_stored_float16=allow)
+                self.assertFalse(backend.calls)
+                self.assertFalse((Path(tmp)/'out').exists())
+        base.flags.writeable=False
+        with self.assertRaisesRegex(ValueError,'Frozen feature'):
+            adapter.feature_proof(base,names,['C1']*30,[0,1,2],'0'*64,allow_stored_float16=True)
 
     def test_recursive_largest_leaf_preserves_lineage_noise_and_model_count(self):
         import numpy as np
