@@ -96,9 +96,11 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
         raise ValueError('Verified literal CPU partition required')
     cpus = plan['resources']['maximum_cpus']
     memory = plan['resources']['maximum_memory_bytes']
+    overhead = plan['resources'].get('supervisor_memory_reserve_bytes', 0)
     seconds = plan['resources']['maximum_wall_seconds']
     if (type(cpus) is not int or not 1 <= cpus <= 4 or type(memory) is not int
-            or memory <= 0 or type(seconds) is not int or not 60 <= seconds <= 3600):
+            or memory <= 0 or type(overhead) is not int or not 0 <= overhead <= 512*1024**2
+            or type(seconds) is not int or not 60 <= seconds <= 3600):
         raise ValueError('Bounded smoke resources required')
     if not Path(bootstrap_python).is_absolute():
         raise ValueError('Absolute existing Python 3.11 bootstrap required')
@@ -108,7 +110,7 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
     minutes = (seconds + 59) // 60
     lines = ['#!/bin/bash', '#SBATCH --nodes=1', '#SBATCH --ntasks=1',
              '#SBATCH --cpus-per-task=' + str(cpus),
-             '#SBATCH --mem=' + str((memory + 1024**2 - 1)//1024**2) + 'M',
+             '#SBATCH --mem=' + str((memory + overhead + 1024**2 - 1)//1024**2) + 'M',
              '#SBATCH --time=' + str(minutes), '#SBATCH --partition=' + partition,
              '#SBATCH --no-requeue',
              'set -euo pipefail',
