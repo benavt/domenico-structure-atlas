@@ -218,7 +218,7 @@ def run_smoke(plan, output, check=lambda: None, *, adapters=None):
             probes.append(('check-runtime', '--analysis-only'))
         for arguments in probes:
             flags = ['-I']
-            if plan.get('phase') == 'repro64':
+            if plan.get('phase') in ('repro64', 'isolate64'):
                 import mimas_contract
                 flags = mimas_contract.python_flags(plan)
             command = [plan['runtime_python'], *flags, '-m', 'structure_clustering', *arguments]
