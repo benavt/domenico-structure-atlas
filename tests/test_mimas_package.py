@@ -70,6 +70,8 @@ class PackageTests(unittest.TestCase):
         plain=dict(plan);plain.pop('containment')
         inner=package.smoke_batch('/payload/plan.json',plain,'/base/bin/python')
         self.assertNotIn('mimas_scope.py',inner);self.assertIn('-m venv',inner)
+        plain['runtime_interpreter']='base_symlink'
+        self.assertIn('-m venv --symlinks',package.smoke_batch('/payload/plan.json',plain,'/base/bin/python'))
 
     def test_batch_rejects_injection_and_unbounded_requests(self):
         plan = {'run_root': '/run/new', 'runtime_prefix': '/runtime/new',

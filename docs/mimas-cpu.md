@@ -110,3 +110,20 @@ production admission still needs a host-memory budget. No ancestor cgroup, UID
 limit, shared service or other job is modified. The earlier administrator-helper
 prototype is not used. Every new environment/fixture run still needs its exact
 approved plan; the migration probe grants no scientific execution authority.
+
+
+## Python base and native C++ ABI
+
+The first scoped environment installed successfully but its import smoke found
+that a copied Conda interpreter changed the meaning of `$ORIGIN/../lib` in the
+ELF RPATH. A wheel loaded the older system C++ runtime before the base Python's
+ICU extension, which requires CXXABI_1.3.15. This is independent of job RAM.
+
+For this base, set `runtime_interpreter: base_symlink`. The venv then links its
+interpreter to the exact hash-bound base binary, retaining its original native
+library search directory. Prefix/bin parents must remain real directories;
+only the declared interpreter link is permitted, and its resolved target must
+match the bound base binary. Bind the base C++/GCC library hashes as runtime
+closure evidence. Do not use a broad LD_LIBRARY_PATH or preload workaround.
+The base installation remains read-only and must be retained. Preserve failed
+copied environments; a successor approved plan creates a fresh linked venv.

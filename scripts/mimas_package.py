@@ -127,11 +127,15 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
         return '\n'.join(lines)+'\n'
     if not environment_exists:
         temporary = str(Path(plan_path).parent / 'setup-tmp')
+        mode = plan.get('runtime_interpreter', 'copies')
+        if mode not in ('copies', 'base_symlink'):
+            raise ValueError('Unsupported interpreter creation mode')
+        flag = '--symlinks' if mode == 'base_symlink' else '--copies'
         lines += [q(bootstrap_python) + ' -I ' + q(plan['runner']) + ' setup-check ' + q(str(plan_path)),
                   '/bin/mkdir -m 700 -- ' + q(temporary),
                   'export TMPDIR=' + q(temporary),
                   'test ! -e ' + q(plan['runtime_prefix']),
-                  q(bootstrap_python) + ' -I -m venv --copies ' + q(plan['runtime_prefix']),
+                  q(bootstrap_python) + ' -I -m venv '+flag+' ' + q(plan['runtime_prefix']),
                   q(plan['runtime_python']) + ' -I -m pip install --no-index --require-hashes --only-binary=:all: --find-links ' + q(plan['wheelhouse']) + ' -r ' + q(plan['requirements'])]
     lines += ['exec ' + q(plan['runtime_python']) + ' -I ' + q(plan['runner']) + ' smoke ' + q(str(plan_path))]
     return '\n'.join(lines) + '\n'

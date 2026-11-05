@@ -127,6 +127,18 @@ class ControllerTests(unittest.TestCase):
                     subject.run(self.plan_path, popen=Mock(side_effect=AssertionError('must not spawn')))
                 self.assertFalse(self.root.exists())
 
+    def test_runtime_link_is_allowed_only_to_the_bound_base_binary(self):
+        base=self.directory/'base-python';base.write_bytes(b'bound base ELF')
+        prefix=self.directory/'runtime';(prefix/'bin').mkdir(parents=True)
+        executable=prefix/'bin/python';executable.symlink_to(base)
+        value=self.plan(runtime_interpreter='base_symlink',runtime_prefix=str(prefix),runtime_python=str(executable),bootstrap={'binary':subject.record(base)})
+        self.assertEqual(subject.verify(self.plan_path)['runtime_interpreter'],'base_symlink')
+        other=self.directory/'other-python';other.write_bytes(b'foreign')
+        executable.unlink();executable.symlink_to(other)
+        with self.assertRaisesRegex(ValueError,'exact bound'):subject.verify(self.plan_path)
+        executable.unlink();executable.write_bytes(base.read_bytes())
+        with self.assertRaisesRegex(ValueError,'exact bound'):subject.verify(self.plan_path)
+
     def test_plan_hash_mismatch_rejected(self):
         value = self.plan()
         value['runtime_python'] = '/unapproved/python'

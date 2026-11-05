@@ -92,9 +92,17 @@ def verify(plan_path):
         raise ValueError('Exact non-symlink run destination required')
     for name in ('runtime_prefix', 'runtime_python'):
         runtime_path = Path(plan[name])
+        symlink_mode = name == 'runtime_python' and plan.get('runtime_interpreter') == 'base_symlink'
+        checked = list(runtime_path.parents) if symlink_mode else [runtime_path,*runtime_path.parents]
         if (not runtime_path.is_absolute() or '..' in runtime_path.parts
-                or any(p.is_symlink() for p in [runtime_path, *runtime_path.parents])):
+                or any(p.is_symlink() for p in checked)):
             raise ValueError('Exact non-symlink runtime destination required')
+        if symlink_mode and (runtime_path.exists() or runtime_path.is_symlink()):
+            target = bound(plan['bootstrap']['binary'])
+            if not runtime_path.is_symlink() or runtime_path.resolve(strict=True) != target:
+                raise ValueError('Runtime link must resolve to the exact bound base interpreter')
+    if plan.get('runtime_interpreter', 'copies') not in ('copies', 'base_symlink'):
+        raise ValueError('Unsupported interpreter creation mode')
     if not Path(plan['runtime_python']).is_relative_to(Path(plan['runtime_prefix'])):
         raise ValueError('Interpreter must stay in the new runtime prefix')
     if (phase == 'pilot64' and plan['inputs']['model_count'] != 64
