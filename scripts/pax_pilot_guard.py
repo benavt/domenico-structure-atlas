@@ -85,7 +85,7 @@ def _child_environment(plan, contract):
 def run(plan_path):
     cpu, contract = _modules()
     plan = cpu.verify(plan_path)
-    need(plan.get('execution_host') == 'pax' and plan.get('phase') in ('smoke', 'pilot64'),
+    need(plan.get('execution_host') == 'pax' and plan.get('phase') in ('smoke', 'pilot64', 'repro64'),
          'Only the approved Pax setup or paired 64-model pilot is supported')
     need(not plan.get('containment'), 'Pax containment belongs to its systemd unit, not a Slurm scope')
     bootstrap = plan['bootstrap']

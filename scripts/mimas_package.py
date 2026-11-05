@@ -138,8 +138,8 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
                   q(bootstrap_python) + ' -I -m venv '+flag+' ' + q(plan['runtime_prefix']),
                   q(plan['runtime_python']) + ' -I -m pip install --no-index --require-hashes --only-binary=:all: --find-links ' + q(plan['wheelhouse']) + ' -r ' + q(plan['requirements'])]
     phase=plan.get('phase','smoke')
-    if phase not in ('smoke','pilot64'):
+    if phase not in ('smoke','pilot64','repro64'):
         raise ValueError('Explicit supported smoke/pilot batch phase required')
-    action='run' if phase=='pilot64' else 'smoke'
+    action='smoke' if phase=='smoke' else 'run'
     lines += ['exec ' + q(plan['runtime_python']) + ' -I ' + q(plan['runner']) + ' '+action+' ' + q(str(plan_path))]
     return '\n'.join(lines) + '\n'
