@@ -145,6 +145,14 @@ class SavedPCATests(unittest.TestCase):
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_attempts_come_from_frozen_plan_and_cannot_hide_an_interrupted_fit(self):
+        value=dict(previous_attempts_charged=24,maximum_new_projection_fits=20,maximum_cumulative_attempts=44)
+        self.assertEqual(recovery.attempt_accounting(dict(fit_accounting=value)),
+            dict(previous_attempts_charged=24,maximum_cumulative_attempts=44))
+        for key,bad in (('previous_attempts_charged',True),('maximum_new_projection_fits',21),('maximum_cumulative_attempts',43)):
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'accounting differs'):
+                recovery.attempt_accounting(dict(fit_accounting=dict(value,**{key:bad})))
+
     def test_no_approval_or_widened_budget_cannot_reach_native_controls(self):
         for bad in ('approval','budget','target'):
             with self.subTest(bad=bad),tempfile.TemporaryDirectory() as tmp:

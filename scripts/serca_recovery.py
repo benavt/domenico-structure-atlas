@@ -25,6 +25,15 @@ def need(value, message):
     if not value:raise ValueError(message)
 
 
+def attempt_accounting(plan):
+    value=plan['fit_accounting'];previous=value['previous_attempts_charged']
+    need(type(previous) is int and previous>=0
+         and value['maximum_new_projection_fits']==SCOPE['maximum_new_projection_fits']
+         and value['maximum_cumulative_attempts']==previous+SCOPE['maximum_new_projection_fits'],
+         'Frozen cumulative fit accounting differs')
+    return dict(previous_attempts_charged=previous,maximum_cumulative_attempts=value['maximum_cumulative_attempts'])
+
+
 def approved(path):
     path = Path(path).absolute(); plan = json.loads(path.read_text())
     proof = json.loads((path.parent/'approval.json').read_text())
@@ -33,6 +42,7 @@ def approved(path):
     need(plan['operation'] == 'serca-selected-cache-recovery' and plan['settings'] == SCOPE
          and plan['target']['target'] == SCOPE['target'] and plan['target']['model_count'] == 5072,
          'Approved SERCA recovery scope differs')
+    attempt_accounting(plan)
     from run_reviewed_plan import control_group, verify_controls
     group = control_group(); verify_controls(group,plan['resources'])
     need((group/'memory.high').read_text().strip() == str(plan['resources']['memory_high_bytes'])
@@ -278,7 +288,7 @@ def main():
     result=dict(status='serca_primary_and_density_recovered',plan_sha256=sha256(path),
         primary_manifest=record(root/'primary/manifest.json'),density=record(root/'density/density-receipt.json'),
         PCA_reused=True,new_projection_fits_max=20,HDBSCAN_extractions_max=30,
-        previous_attempts_charged=23,maximum_cumulative_attempts=43,
+        **attempt_accounting(plan),
         native_TM_calls=0,coordinate_parses=0,scoring_calls=0,molecular_exports=0,public_site_changed=False,
         model_selection_status='pending separate plan using actual cluster counts')
     save(root/'serca-recovery-completion.json',result)
