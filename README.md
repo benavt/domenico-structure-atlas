@@ -55,3 +55,6 @@ representatives and the selected panels. Published release manifests record thei
 actual completed coverage; source changes never imply a live-site update.
 
 Run source-only checks with `python3 -m unittest discover -s tests`.
+
+For an isolated Mimas CPU installation and the smoke → SERCA-64 → full UMAP
+pilot ladder, see [Mimas CPU validation](docs/mimas-cpu.md).
