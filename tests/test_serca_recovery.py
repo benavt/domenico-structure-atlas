@@ -260,4 +260,118 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertTrue(workspace.is_dir())
 
 
+class ContinuationScopeTests(unittest.TestCase):
+    def plan(self):
+        return dict(reuse={key:{} for key in ('umap_checkpoint','umap_plan','umap_completion','umap_audit')},
+            execution_stages=['tsne','labels','density'],
+            fit_accounting=dict(previous_attempts_charged=26,maximum_new_projection_fits=19,maximum_cumulative_attempts=45))
+
+    def test_closed_umap_inheritance_allows_only_remaining_stages_and_nineteen_fits(self):
+        plan=self.plan();self.assertEqual(recovery.execution_stages(plan),['tsne','labels','density'])
+        self.assertEqual(recovery.scientific_scope(plan)['maximum_new_projection_fits'],19)
+        self.assertEqual(recovery.scientific_scope(plan)['maximum_hdbscan_extractions'],30)
+        self.assertEqual(recovery.attempt_accounting(plan)['maximum_cumulative_attempts'],45)
+        for stages in (['umap'],list(recovery.STAGES),['labels'],['tsne','density'],[]):
+            with self.subTest(stages=stages),self.assertRaisesRegex(ValueError,'remaining stages'):
+                recovery.execution_stages(dict(plan,execution_stages=stages))
+        for stages,fits in ((['tsne'],2),(['tsne','labels'],4)):
+            scope=recovery.scientific_scope(dict(plan,execution_stages=stages))
+            self.assertEqual(scope['maximum_new_projection_fits'],fits);self.assertEqual(scope['maximum_hdbscan_extractions'],0)
+
+    def test_incomplete_reuse_evidence_cannot_silently_refit(self):
+        plan=self.plan();del plan['reuse']['umap_audit']
+        with self.assertRaisesRegex(ValueError,'independent audit'):recovery.execution_stages(plan)
+
+    def test_child_cli_rejects_reused_umap_before_context_or_numerical_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan=self.plan();plan['run_root']=tmp
+            with patch.object(recovery,'approved',return_value=plan),patch.object(sys,'argv',['serca_recovery.py',tmp+'/plan.json','--stage','umap']):
+                with self.assertRaisesRegex(ValueError,'outside the approved prefix'):recovery.main()
+            self.assertFalse((Path(tmp)/'recovery-context.json').exists())
+
+
+@unittest.skipUnless(importlib.util.find_spec('numpy'),'Optional NumPy for static closed-UMAP fixtures')
+class SavedUMAPTests(unittest.TestCase):
+    def fixture(self,root,bad=None):
+        import numpy as np
+        old=root/'pilot';primary=old/'primary';(primary/'clustering/umap').mkdir(parents=True);(primary/'checkpoints').mkdir()
+        fresh=root/'new/primary';(fresh/'clustering').mkdir(parents=True);(fresh/'checkpoints').mkdir()
+        names=['model-'+str(i) for i in range(5072)];members=[dict(model=n,source_path='/unopened-originals/'+n+'.pdb') for n in names]
+        order=hashlib.sha256('\n'.join(names).encode()).hexdigest();core=list(range(57,951))
+        feature=dict(feature_sha256='a'*64,retained_reference_positions=core,pair_mask_sha256='b'*64)
+        report=dict(retained_reference_positions=core,pair_mask_sha256='b'*64)
+        target=dict(feature_proof=put(old/'feature-proof.json',feature),selected_cache=dict(path='/unopened-selected-cache.npz',sha256='c'*64,bytes=4054316678))
+        library=dict(commit='f'*40,checkout='/unchanged-native-library')
+        plan=dict(target=target,sources=dict(library=library),runtime_python='/existing/python',runtime_fingerprint='/bound/runtime.json',
+            fit_accounting=dict(previous_attempts_charged=26,maximum_new_projection_fits=19,maximum_cumulative_attempts=45))
+        pilot_plan=put(old/'execution-plan.json',dict(target=target,execution_stages=['umap'],sources=dict(library=library),
+            runtime_python=plan['runtime_python'],runtime_fingerprint=plan['runtime_fingerprint'],run_root=str(old)))
+        params=dict(n_neighbors=30 if bad=='parameters' else 15,min_dist=.1,n_components=2)
+        base=primary/'checkpoints/umap-base.html';base.write_text('Opaque accepted UMAP HTML')
+        image=primary/'clustering/umap/model-origin.png';image.write_bytes(b'Opaque accepted image')
+        xy=np.zeros((5072,2),np.float32)
+        if bad=='finite':xy[0,0]=np.nan
+        saved_names=names.copy()
+        if bad=='order':saved_names[0]='another-model'
+        side=primary/'clustering/umap_embeddings.npz'
+        np.savez_compressed(side,embeddings=xy,filenames=np.asarray(saved_names),filepaths=np.asarray([r['source_path'] for r in members]))
+        outputs=[recovery.record(p) for p in (base,side,image)]
+        checkpoint=put(primary/'checkpoints/umap.json',dict(method='umap',status='complete',parameters=params,base_html=str(base),
+            native_output_html=str(primary/'clustering/umap.html'),outputs=outputs,
+            source_feature_proof=target['feature_proof'],selected_cache=target['selected_cache'],
+            feature_sha256='z'*64 if bad=='features' else feature['feature_sha256'],models_sha256=order,
+            UMAP_fits=1,tsne_fits=0,internal_tsne_PCA_fits=0,primary_PCA_fits=0,cache_reused_without_rewrite=True,native_library=library))
+        metrics=old/'metrics.sqlite';metrics.write_bytes(b'Opaque closed accepted metrics')
+        view=dict(html=str(primary/'clustering/umap.html'),embeddings=str(side),params=params,
+            images=[dict(image=str(image),kind='model_type',title='Model origin')])
+        manifest=put(primary/'manifest.progress.json',dict(identifier='SERCA_P04191',structure_count=5072,
+            terminal_detection=report,defaults=dict(random_seed=42),metrics_db=str(metrics),
+            method_receipts=dict(umap=checkpoint),clustering=dict(umap=view)))
+        completion=put(old/'serca-recovery-completion.json',dict(status='serca_selected_stages_ready',full_clustering_complete=False,
+            completed_recovery_stages=['umap'],new_projection_fits_max=1,HDBSCAN_extractions_max=0,
+            maximum_cumulative_attempts=26,plan_sha256=pilot_plan['sha256'],primary_manifest=manifest))
+        guard=put(old/'guard-exit.json',dict(status='complete',returncode=0))
+        audit=put(old/'independent-audit.json',dict(status='accepted_partial_UMAP_only_RAM_pilot',plan=pilot_plan,
+            checkpoint=checkpoint,partial_completion=completion,models=5072,construct_residues=993,retained_residues=894,
+            canonical_core=[58,951],guard_completion=guard,raw_feature_sha256=feature['feature_sha256'],
+            model_order_sha256=order,pair_mask_sha256=feature['pair_mask_sha256'],umap=dict(artifact=recovery.record(side))))
+        plan['reuse']=dict(umap_plan=pilot_plan,umap_checkpoint=checkpoint,umap_completion=completion,umap_audit=audit,
+                           feature_sha256=feature['feature_sha256'],metrics=recovery.record(metrics))
+        originals=[*outputs,checkpoint,manifest,completion,pilot_plan,audit,recovery.record(metrics)]
+        return plan,fresh,names,members,feature,dict(names_sha256=order),report,originals
+
+    def call(self,case):return recovery.reuse_saved_umap(*case[:7])
+
+    def test_closed_UMAP_and_figures_are_copied_exactly_without_original_or_cache_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case=self.fixture(Path(tmp));view,receipt=self.call(case)
+            value=recovery.read(receipt)
+            self.assertTrue(value['UMAP_reused']);self.assertEqual(value['UMAP_fits'],0)
+            self.assertEqual(value['prior_UMAP_fits_charged'],1)
+            self.assertEqual(value['source_checkpoint'],case[0]['reuse']['umap_checkpoint'])
+            self.assertEqual(view['images'][0]['kind'],'model_type');self.assertTrue(view['images'][0]['reused'])
+            self.assertEqual(Path(view['html']).read_text(),'Opaque accepted UMAP HTML')
+            self.assertTrue(all(recovery.record(r['path'])==r for r in case[-1]))
+            parent=recovery.read(case[0]['reuse']['umap_checkpoint'])
+            self.assertEqual([(r['bytes'],r['sha256']) for r in value['outputs']],[(r['bytes'],r['sha256']) for r in parent['outputs']])
+            self.assertFalse(Path('/unopened-originals').exists())
+            self.assertFalse(Path('/unopened-selected-cache.npz').exists())
+
+    def test_mismatched_protocol_features_order_or_nonfinite_saved_values_are_rejected(self):
+        for bad,reason in (('parameters','protocol'),('features','features'),('order','population'),('finite','population')):
+            with self.subTest(bad=bad),tempfile.TemporaryDirectory() as tmp:
+                case=self.fixture(Path(tmp),bad=bad)
+                with self.assertRaisesRegex(ValueError,reason):self.call(case)
+                self.assertFalse((case[1]/'checkpoints/umap.json').exists())
+
+    def test_tampered_bound_image_stops_inheritance_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case=self.fixture(Path(tmp));saved=recovery.read(case[0]['reuse']['umap_checkpoint'])
+            image=next(r for r in saved['outputs'] if r['path'].endswith('.png'))
+            Path(image['path']).write_bytes(b'Changed input; do not repair')
+            with self.assertRaisesRegex(ValueError,'Bound input changed'):self.call(case)
+            self.assertEqual(Path(image['path']).read_bytes(),b'Changed input; do not repair')
+            self.assertFalse((case[1]/'checkpoints/umap.json').exists())
+
+
 if __name__=='__main__':unittest.main()

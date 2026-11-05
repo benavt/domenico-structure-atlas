@@ -1,6 +1,7 @@
 """Exact-plan SERCA recovery; heavy stages have separate bounded processes."""
 import argparse
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,10 +26,18 @@ def need(value, message):
     if not value:raise ValueError(message)
 
 
+def reuses_umap(plan):
+    keys={'umap_checkpoint','umap_plan','umap_completion','umap_audit'}
+    present=keys.intersection(plan.get('reuse',{}))
+    need(not present or present==keys,'Closed UMAP reuse requires checkpoint, plan, completion and independent audit')
+    return bool(present)
+
+
 def execution_stages(plan):
-    stages=plan.get('execution_stages',list(STAGES))
-    need(isinstance(stages,list) and stages and tuple(stages)==STAGES[:len(stages)],
-         'Recovery stages must be a nonempty approved prefix')
+    offset=1 if reuses_umap(plan) else 0
+    allowed=STAGES[offset:];stages=plan.get('execution_stages',list(allowed))
+    need(isinstance(stages,list) and stages and tuple(stages)==allowed[:len(stages)],
+         'Recovery stages must be a nonempty approved prefix of remaining stages')
     return stages
 
 
@@ -199,6 +208,82 @@ def verify_saved_pca(pca, plan):
          and pca['settings']==dict(n_components=2), 'Saved PCA feature, engine or settings binding differs')
 
 
+def reuse_saved_umap(plan, primary, names, members, feature, axes, report):
+    """Copy only the independently accepted closed pilot; never refit its UMAP."""
+    import numpy as np
+    reuse=plan['reuse'];entry=reuse['umap_checkpoint'];saved=read(entry)
+    pilot=read(reuse['umap_plan']);completion=read(reuse['umap_completion']);audit=read(reuse['umap_audit'])
+    need(audit['status']=='accepted_partial_UMAP_only_RAM_pilot' and audit['plan']==reuse['umap_plan']
+         and audit['checkpoint']==entry and audit['partial_completion']==reuse['umap_completion']
+         and audit['models']==5072 and audit['construct_residues']==993 and audit['retained_residues']==894
+         and audit['canonical_core']==[58,951], 'Independent closed UMAP acceptance differs')
+    guard=read(audit['guard_completion'])
+    need(guard['status']=='complete' and guard['returncode']==0
+         and completion['status']=='serca_selected_stages_ready' and completion['full_clustering_complete'] is False
+         and completion['completed_recovery_stages']==['umap'] and completion['new_projection_fits_max']==1
+         and completion['HDBSCAN_extractions_max']==0
+         and completion['plan_sha256']==reuse['umap_plan']['sha256']
+         and completion['maximum_cumulative_attempts']==plan['fit_accounting']['previous_attempts_charged'],
+         'Source pilot completion or charged attempt history differs')
+    need(pilot['target']==plan['target'] and pilot['execution_stages']==['umap']
+         and pilot['sources']['library']==plan['sources']['library']
+         and pilot['runtime_python']==plan['runtime_python'] and pilot['runtime_fingerprint']==plan['runtime_fingerprint'],
+         'Reused UMAP input, native engine or runtime binding differs')
+    need(saved['method']=='umap' and saved['status']=='complete'
+         and saved['parameters']==dict(n_neighbors=15,min_dist=.1,n_components=2)
+         and saved['native_library']==plan['sources']['library']
+         and saved['source_feature_proof']==plan['target']['feature_proof']
+         and saved['selected_cache']==plan['target']['selected_cache']
+         and saved['UMAP_fits']==1 and saved['tsne_fits']==saved['internal_tsne_PCA_fits']==saved['primary_PCA_fits']==0
+         and saved['cache_reused_without_rewrite'] is True, 'Saved UMAP protocol or fit receipt differs')
+    need(saved['feature_sha256']==feature['feature_sha256']==reuse['feature_sha256']==audit['raw_feature_sha256']
+         and saved['models_sha256']==axes['names_sha256']==audit['model_order_sha256']
+         and hashlib.sha256('\n'.join(names).encode()).hexdigest()==axes['names_sha256']
+         and feature['retained_reference_positions']==report['retained_reference_positions']==list(range(57,951))
+         and feature['pair_mask_sha256']==report['pair_mask_sha256']==audit['pair_mask_sha256'],
+         'Reused UMAP features, canonical mask or ordered identities differ')
+    parent=read(completion['primary_manifest']);view=deepcopy(parent['clustering']['umap'])
+    need(parent['identifier']=='SERCA_P04191' and parent['structure_count']==5072
+         and parent['terminal_detection']==report and parent['defaults']['random_seed']==42
+         and parent['method_receipts']['umap']==entry and view['params']==saved['parameters'],
+         'Pilot manifest does not bind the accepted seed42 UMAP/core')
+    metrics=record(parent['metrics_db'])
+    need(metrics==reuse['metrics'] and not any(Path(metrics['path']+suffix).exists() for suffix in ('-wal','-shm','-journal')),
+         'Accepted pilot metrics must remain a bound closed snapshot')
+    base=Path(saved['base_html']).absolute();source_root=Path(pilot['run_root']).absolute()/'primary'
+    targets={};outputs=[];sidecar=None
+    for output in saved['outputs']:
+        source=bound(output)
+        need(source.is_relative_to(source_root),'Accepted UMAP artifact leaves the pilot primary')
+        if source==base:destination=primary/'checkpoints/umap-base.html'
+        elif source.name=='umap_embeddings.npz':destination=primary/'clustering/umap_embeddings.npz';sidecar=destination
+        elif source.suffix.lower()=='.png':destination=primary/'clustering/umap'/source.name
+        else:raise ValueError('Unexpected accepted UMAP artifact')
+        need(str(source) not in targets,'Repeated accepted UMAP output')
+        targets[str(source)]=str(destination);outputs.append(copy_bound(output,destination))
+    need(str(base) in targets and sidecar is not None and view['images'], 'Accepted UMAP artifacts incomplete')
+    original_sidecar=next(row for row in saved['outputs'] if Path(row['path']).name=='umap_embeddings.npz')
+    need(original_sidecar==audit['umap']['artifact'] and str(Path(view['embeddings']).absolute())==original_sidecar['path'],
+         'Independently accepted UMAP sidecar binding differs')
+    with np.load(sidecar,allow_pickle=False) as values:
+        need(values['embeddings'].shape==(5072,2) and np.isfinite(values['embeddings']).all()
+             and values['filenames'].tolist()==names and values['filepaths'].tolist()==[r['source_path'] for r in members],
+             'Reused UMAP population/order/finite coordinates differ')
+    images=[]
+    for image in view['images']:
+        original=str(Path(image['image']).absolute())
+        need(original in targets and Path(original).suffix.lower()=='.png','UMAP figure alias lacks a bound output')
+        images.append(dict(image,image=targets[original],reused=True))
+    html=copy_bound(record(primary/'checkpoints/umap-base.html'),primary/'clustering/umap.html')
+    view.update(html=html['path'],embeddings=str(sidecar),images=images)
+    inherited=deepcopy(saved)
+    inherited.update(outputs=outputs,base_html=str(primary/'checkpoints/umap-base.html'),native_output_html=html['path'],
+        source_checkpoint=entry,source_plan=reuse['umap_plan'],independent_acceptance=reuse['umap_audit'],
+        UMAP_reused=True,UMAP_fits=0,prior_UMAP_fits_charged=1)
+    save(primary/'checkpoints/umap.json',inherited)
+    return view,record(primary/'checkpoints/umap.json')
+
+
 def validate_context(path, plan, context):
     root=Path(plan['run_root']).absolute()
     need(context['plan_sha256']==sha256(path) and context['descriptor']==plan['target']
@@ -279,13 +364,18 @@ def prepare_context(path, plan, *, check, checkpoint):
     for key in ('input_inventory','dataset_sha256','input_file_count','dataset_scope','presentation_target',
                 'ensemble_selection_scope','ensemble_confidence_preflight','requested_exports'):
         if key in prior:manifest[key]=deepcopy(prior[key])
+    if reuses_umap(plan):
+        view,receipt=reuse_saved_umap(plan,primary,names,members,feature,axes,report)
+        manifest['clustering']['umap']=view;manifest['method_receipts']['umap']=receipt
+        manifest['derivation'].update(UMAP_reused_from=plan['reuse']['umap_checkpoint'],new_primary_UMAP_fits=0,
+            UMAP_independent_acceptance=plan['reuse']['umap_audit'])
     save(primary/'terminal_detection.json',report)
     save(primary/'manifest.progress.json',manifest)
     context=dict(descriptor=target,newprimary_manifest=str(primary/'manifest.progress.json'),metrics_db=str(metrics),
         members=members,native_density=plan['native_density'],method_receipts=manifest['method_receipts'],
         stage_tmpdirs={s:str(ssd_root(plan)/s) for s in STAGES},parent_pid=os.getpid(),guard_pgid=os.getpgrp(),
         plan_sha256=sha256(path))
-    save(root/'recovery-context.json',context);checkpoint('serca-inherited-PCA-closed')
+    save(root/'recovery-context.json',context);checkpoint('serca-inherited-PCA-and-UMAP-closed' if reuses_umap(plan) else 'serca-inherited-PCA-closed')
     return context
 
 
@@ -369,7 +459,7 @@ def main():
     result=dict(status='serca_primary_and_density_recovered' if complete else 'serca_selected_stages_ready',plan_sha256=sha256(path),
         primary_manifest=record(root/('primary/manifest.json' if complete else 'primary/manifest.progress.json')),
         completed_recovery_stages=stages,full_clustering_complete=complete,
-        PCA_reused=True,new_projection_fits_max=scope['maximum_new_projection_fits'],
+        PCA_reused=True,UMAP_reused=reuses_umap(plan),new_projection_fits_max=scope['maximum_new_projection_fits'],
         HDBSCAN_extractions_max=scope['maximum_hdbscan_extractions'],
         **attempt_accounting(plan),
         native_TM_calls=0,coordinate_parses=0,scoring_calls=0,molecular_exports=0,public_site_changed=False,
