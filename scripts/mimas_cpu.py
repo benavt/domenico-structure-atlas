@@ -17,8 +17,8 @@ import time
 
 
 STAGES = {'probe': (), 'smoke': (), 'pilot64': ('pca', 'umap', 'tsne', 'labels', 'density0'),
-          'umap-full': ('umap',), 'repro64': ('umap1', 'tsne1', 'umap2', 'tsne2')}
-FIT_LIMITS = {'probe': (0, 0), 'smoke': (0, 0), 'pilot64': (9, 6), 'umap-full': (1, 0), 'repro64': (6, 0)}
+          'umap-full': ('umap',), 'repro64': ('umap1', 'tsne1', 'umap2', 'tsne2'), 'isolate64': ('umap1', 'tsne1')}
+FIT_LIMITS = {'probe': (0, 0), 'smoke': (0, 0), 'pilot64': (9, 6), 'umap-full': (1, 0), 'repro64': (6, 0), 'isolate64': (3, 0)}
 STAGE_LIMITS = {'smoke': (0, 0), 'pca': (1, 0), 'umap': (1, 0),
                 'tsne': (2, 0), 'labels': (2, 0), 'density0': (3, 6),
                 'umap1': (1, 0), 'tsne1': (2, 0), 'umap2': (1, 0), 'tsne2': (2, 0)}
@@ -71,7 +71,7 @@ def verify(plan_path):
     if str(own) not in entries:
         raise ValueError('Controller is not bound by this plan')
     source = own.parent
-    if phase == 'repro64':
+    if phase in ('repro64', 'isolate64'):
         if (str(source / 'reducer_diagnostic.py') not in entries
                 or plan.get('diagnostic_profile') not in ('native', 'generic-jit-v1')
                 or plan.get('create_environment') is not False
@@ -82,6 +82,9 @@ def verify(plan_path):
             bound(entry)
             if entry not in plan['frozen_files']:
                 raise ValueError('Diagnostic source is not frozen')
+    if phase == 'isolate64':
+        import reducer_diagnostic
+        reducer_diagnostic.verify_isolation_plan(plan)
     for name in ('mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py'):
         if str(source / name) not in entries:
             raise ValueError('Controller dependency is not frozen: ' + name)
@@ -208,7 +211,7 @@ def child(plan_path, stage, context_path, context_sha):
             or stage != 'smoke' and stage not in STAGES[plan['phase']]):
         raise ValueError('Unapproved child stage')
     contract = _modules()
-    if plan['phase'] == 'repro64':
+    if plan['phase'] in ('repro64', 'isolate64'):
         plan = dict(plan, active_stage=stage)
     observation = contract.observe(plan)
     root = Path(plan['run_root'])
@@ -221,7 +224,7 @@ def child(plan_path, stage, context_path, context_sha):
         raise ValueError('Stage context scope differs')
     if value.get('controller_pid') != os.getppid():
         raise ValueError('Stage belongs to a different live controller')
-    if plan['phase'] == 'repro64':
+    if plan['phase'] in ('repro64', 'isolate64'):
         plan = dict(plan, runtime_payload_state=value['runtime_payload_state'])
     intent = json.loads((root / ('intent-' + stage + '.json')).read_text())
     if (intent.get('plan_sha256') != sha(plan_path) or intent.get('stage') != stage
@@ -234,7 +237,7 @@ def child(plan_path, stage, context_path, context_sha):
             or any(p.is_symlink() for p in [output, *output.parents])):
         raise ValueError('Owned stage output required')
     save(root / ('resource-observation-' + stage + '.json'), observation)
-    if plan['phase'] == 'repro64':
+    if plan['phase'] in ('repro64', 'isolate64'):
         import reducer_diagnostic
         reducer_diagnostic.pre_import(plan)
     if stage == 'smoke':
@@ -254,7 +257,7 @@ def child(plan_path, stage, context_path, context_sha):
         result = mimas_smoke.run_smoke(plan, smoke_output)
         if result.get('fit_ready') is not True:
             raise ValueError('Installed runtime smoke is not fit-ready')
-        if plan['phase'] == 'repro64':
+        if plan['phase'] in ('repro64', 'isolate64'):
             reducer_diagnostic.run_stage(plan, stage, output)
         else:
             import mimas_pilot
@@ -264,7 +267,7 @@ def child(plan_path, stage, context_path, context_sha):
 def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.sleep):
     plan = verify(plan_path)
     contract = _modules()
-    if plan['phase'] == 'repro64':
+    if plan['phase'] in ('repro64', 'isolate64'):
         import reducer_diagnostic
         reducer_diagnostic.verify_predecessor(plan)
     env = contract.sanitized_environment(plan)
@@ -277,7 +280,7 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
     save(root / 'owner.json', {'plan_sha256': sha(plan_path), 'uid': os.getuid()})
     save(root / 'resource-observation.json', observation)
     runtime_state = None
-    if plan['phase'] == 'repro64':
+    if plan['phase'] in ('repro64', 'isolate64'):
         runtime_state = reducer_diagnostic.verify_runtime_payload(plan, root)
     save(root / 'runtime.json', dict(python=sys.version, executable=sys.executable,
          prefix=sys.prefix, packages={item.metadata['Name']:item.version
@@ -317,12 +320,12 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
                  {'stage': stage, 'plan_sha256': sha(plan_path), 'status': 'charged_before_launch',
                   'projection_fit_ceiling': STAGE_LIMITS[stage][0],
                   'hdbscan_extraction_ceiling': STAGE_LIMITS[stage][1], 'automatic_retry': False})
-            flags = contract.python_flags(plan) if plan['phase'] == 'repro64' else ['-I']
+            flags = contract.python_flags(plan) if plan['phase'] in ('repro64', 'isolate64') else ['-I']
             command = [plan['runtime_python'], *flags, str(Path(__file__).absolute()),
                        'child', str(Path(plan_path).absolute()), stage, str(context), sha(context)]
             with (root / 'logs' / (stage + '.log')).open('xb') as log:
                 child_env = (contract.sanitized_environment(dict(plan, active_stage=stage))
-                             if plan['phase'] == 'repro64' else env)
+                             if plan['phase'] in ('repro64', 'isolate64') else env)
                 process = popen(command, env=child_env, cwd=root, stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)
                 try:
@@ -357,7 +360,7 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
                         or result.get('native_library_commit') != plan['native']['library_commit']):
                     raise ValueError('Scientific phase receipt scope differs')
                 counts = result['scientific_fits']
-                if plan['phase'] == 'repro64':
+                if plan['phase'] in ('repro64', 'isolate64'):
                     import reducer_diagnostic
                     reducer_diagnostic.validate_receipt(plan, stage, result)
                 if (set(counts) != {'PCA', 'UMAP', 'TSNE', 'HDBSCAN'}

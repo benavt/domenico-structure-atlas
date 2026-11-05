@@ -7,6 +7,51 @@ import sys
 
 STAGES = ('umap1', 'tsne1', 'umap2', 'tsne2')
 PROFILES = ('native', 'generic-jit-v1')
+ISOLATION_STAGES = ('umap1', 'tsne1')
+
+
+def stages(plan):
+    return ISOLATION_STAGES if plan.get('phase') == 'isolate64' else STAGES
+
+
+def verify_isolation_plan(plan):
+    cpu, _, _ = modules()
+    spec = plan.get('isolation', {})
+    if (plan.get('diagnostic_profile') != 'native'
+            or spec.get('optimizer_epochs') != [0, 1]
+            or spec.get('initialization_policy') != 'hash-bound-pax-native-gradient-entry'
+            or 'layouts' not in plan['trace_sources']
+            or plan.get('stages') != list(ISOLATION_STAGES)):
+        raise ValueError('Exact native optimizer/initialization isolation scope required')
+    for entry in (spec['tsne_initialization'], spec['initialization_receipt'], spec['initialization_trace'],
+                  spec['initialization_plan'], spec['initialization_completion']):
+        if entry not in plan['frozen_files']:
+            raise ValueError('Shared initialization provenance is not frozen')
+        cpu.bound(entry)
+    receipt = json.loads(cpu.bound(spec['initialization_receipt']).read_text())
+    trace = json.loads(cpu.bound(spec['initialization_trace']).read_text())
+    source_plan = json.loads(cpu.bound(spec['initialization_plan']).read_text())
+    completion = json.loads(cpu.bound(spec['initialization_completion']).read_text())
+    # Descriptors can relocate, but scientific content and exact source are preserved.
+    entry = spec['tsne_initialization']
+    if (source_plan.get('execution_host') != 'pax' or source_plan.get('diagnostic_profile') != 'native'
+            or source_plan.get('phase') != 'repro64'
+            or completion.get('status') != 'diagnostic_pilot_complete'
+            or completion.get('plan_sha256') != spec['initialization_plan']['sha256']
+            or completion['stage_receipts']['tsne1']['sha256'] != spec['initialization_receipt']['sha256']
+            or receipt.get('diagnostic_profile') != 'native' or receipt.get('stage') != 'tsne1'
+            or not receipt.get('phase_complete') or receipt['inputs']['feature_sha256'] != plan['inputs']['feature_sha256']
+            or receipt['inputs']['model_order_sha256'] != plan['inputs']['model_order_sha256']
+            or receipt['inputs']['pair_mask_sha256'] != plan['inputs']['pair_mask_sha256']
+            or receipt['native_library_commit'] != plan['native']['library_commit']
+            or receipt['trace']['sha256'] != spec['initialization_trace']['sha256']
+            or trace.get('status') != 'complete'
+            or trace['counts'] != dict(umap=0, tsne=1)
+            or not any(event['name'] == 'tsne1_initial'
+                       and event['shape'] == [128] and event['dtype'] == '<f4'
+                       and event['artifact']['sha256'] == entry['sha256']
+                       and event['artifact']['bytes'] == entry['bytes'] for event in trace['events'])):
+        raise ValueError('Shared initialization is not the verified native Pax gradient-entry state')
 
 
 def modules():
@@ -42,7 +87,7 @@ def helper(plan):
 def pre_import(plan):
     """Runs before the actual-child installed-wheel import smoke."""
     cpu, contract, _ = modules()
-    if plan.get('diagnostic_profile') not in PROFILES or plan.get('active_stage') not in STAGES:
+    if plan.get('diagnostic_profile') not in PROFILES or plan.get('active_stage') not in stages(plan):
         raise ValueError('Bound diagnostic profile and stage required')
     tool = helper(plan)
     tool.assert_before_native_imports()
@@ -179,7 +224,7 @@ def effective_runtime(plan):
 
 def run_stage(plan, stage, output):
     cpu, _, pilot = modules()
-    if stage not in STAGES or plan.get('active_stage') != stage:
+    if stage not in stages(plan) or plan.get('active_stage') != stage:
         raise ValueError('Diagnostic stage differs from its context')
     method = stage[:-1]
     # Preserve the exact Fe94 implementation and its initialization/precision.
@@ -190,15 +235,24 @@ def run_stage(plan, stage, output):
     import umap
     import sklearn
     versions = dict(umap=umap.__version__,sklearn=sklearn.__version__)
-    for name, module in [('umap',umap_module),('sklearn',tsne_module)]:
+    trace_modules = [('umap',umap_module),('sklearn',tsne_module)]
+    options = {}; install_options = {}
+    if plan.get('phase') == 'isolate64':
+        verify_isolation_plan(plan)
+        import umap.layouts as layout_module
+        trace_modules.append(('layouts',layout_module))
+        options = dict(optimizer_epoch=True,
+                       tsne_initialization=plan['isolation']['tsne_initialization'] if method == 'tsne' else None)
+        install_options = dict(layout_module=layout_module)
+    for name, module in trace_modules:
         if cpu.record(module.__file__) != plan['trace_sources'][name]:
             raise ValueError('Pinned trace module changed: ' + name)
     tool = helper(plan)
     runtime = effective_runtime(plan)
     output = Path(output); native_output = output/'native'
     cpu.save(output/'runtime-effective.json',runtime)
-    trace = tool.ReducerTrace(output/'trace')
-    with trace.install(umap_module,tsne_module,versions=versions,sources=plan['trace_sources']):
+    trace = tool.ReducerTrace(output/'trace', **options)
+    with trace.install(umap_module,tsne_module,versions=versions,sources=plan['trace_sources'], **install_options):
         result = pilot.run_stage(plan,method,native_output)
     runtime_identity_unchanged(plan)
     cpu.save(output/'runtime-effective-after.json',effective_runtime(plan))
@@ -218,6 +272,8 @@ def run_stage(plan, stage, output):
         runtime_effective=cpu.record(output/'runtime-effective.json'),
         runtime_effective_after=cpu.record(output/'runtime-effective-after.json'),
         native_receipt=cpu.record(native_output/'receipt.json'))
+    if plan.get('phase') == 'isolate64':
+        result['isolation'] = plan['isolation']
     result['outputs'] = result['outputs'] + [result['native_receipt'],result['runtime_effective'],
         result['runtime_effective_after'],result['trace']] + [event['artifact'] for event in traced['events'] if 'artifact' in event]
     validate_receipt(plan,stage,result)
@@ -245,4 +301,17 @@ def validate_receipt(plan, stage, result):
     for item in ('trace','runtime_effective','runtime_effective_after','native_receipt'):
         if result[item] not in result['outputs']:
             raise ValueError('Unbound diagnostic output')
+    if plan.get('phase') == 'isolate64':
+        names = {e['name'] for e in traced['events']}
+        replay = plan['isolation']['tsne_initialization'] if method == 'tsne' else None
+        expected_events = ({'umap1_optimizer_scalars', 'umap1_epoch0_scalars', 'umap1_epoch1_scalars',
+                            'umap1_epoch0_after_head_embedding', 'umap1_epoch1_after_head_embedding'}
+                           if method == 'umap' else {'tsne1_native_initial', 'tsne1_initial', 'tsne1_initialization_source'})
+        if (result.get('isolation') != plan['isolation']
+                or traced.get('optimizer_epoch_trace') is not True
+                or method == 'umap' and traced.get('epoch_calls', 0) < 2
+                or traced.get('tsne_initialization') != replay
+                or traced.get('initialization_replays') != int(method == 'tsne')
+                or not expected_events <= names):
+            raise ValueError('Missing extended epoch trace or shared initialization proof')
     return result

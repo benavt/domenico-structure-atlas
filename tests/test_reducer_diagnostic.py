@@ -153,6 +153,86 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(result['diagnostic_profile'],profile)
                 self.assertTrue((output/'receipt.json').is_file())
 
+    def test_isolation_stage_and_runtime_contracts_are_narrow(self):
+        self.assertEqual(cpu.STAGES['isolate64'],('umap1','tsne1'))
+        self.assertEqual(cpu.FIT_LIMITS['isolate64'],(3,0))
+        with tempfile.TemporaryDirectory()as tmp:
+            plan=dict(ProfileTests().plan(Path(tmp)),phase='isolate64',stages=['umap1','tsne1'])
+            self.assertEqual(contract.python_flags(plan),['-I','-B','-X','pycache_prefix='+str(Path(tmp)/'run/cache/python')])
+            env=contract.sanitized_environment(plan,environ={})
+            self.assertTrue(env['DATA_PROCESSED'].endswith('/umap1'))
+            with self.assertRaises(ValueError):contract.sanitized_environment(dict(plan,active_stage='umap2'),environ={})
+
+    def isolation_fixture(self,root):
+        def put(name,value):
+            p=root/name;p.write_text(json.dumps(value));return cpu.record(p)
+        init=root/'init.npy';init.write_bytes(b'fake saved bytes, metadata-only test');entry=cpu.record(init)
+        trace=put('trace.json',dict(status='complete',counts=dict(umap=0,tsne=1),events=[
+            dict(name='tsne1_initial',shape=[128],dtype='<f4',artifact=entry)]))
+        inputs=dict(model_count=64,feature_sha256='f'*64,model_order_sha256='e'*64,pair_mask_sha256='d'*64)
+        receipt=put('receipt.json',dict(phase_complete=True,diagnostic_profile='native',stage='tsne1',
+            inputs=inputs,native_library_commit='a'*40,trace=trace))
+        source=put('source-plan.json',dict(execution_host='pax',diagnostic_profile='native',phase='repro64'))
+        closed=put('completion.json',dict(status='diagnostic_pilot_complete',plan_sha256=source['sha256'],stage_receipts=dict(tsne1=receipt)))
+        isolation=dict(optimizer_epochs=[0,1],initialization_policy='hash-bound-pax-native-gradient-entry',
+            tsne_initialization=entry,initialization_receipt=receipt,initialization_trace=trace,
+            initialization_plan=source,initialization_completion=closed)
+        return dict(phase='isolate64',diagnostic_profile='native',stages=['umap1','tsne1'],
+            native=dict(library_commit='a'*40),trace_sources={'layouts':{}},inputs=inputs,isolation=isolation,
+            frozen_files=[entry,receipt,trace,source,closed])
+
+    def test_isolation_verifies_saved_init_provenance_without_native_imports(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            p=self.isolation_fixture(Path(tmp));diag.verify_isolation_plan(p)
+            p['diagnostic_profile']='generic-jit-v1'
+            with self.assertRaisesRegex(ValueError,'scope'):diag.verify_isolation_plan(p)
+            p['diagnostic_profile']='native';p['frozen_files'].pop()
+            with self.assertRaisesRegex(ValueError,'provenance'):diag.verify_isolation_plan(p)
+
+    def test_isolation_rejects_changed_init_and_wrong_source_cohort(self):
+        for change in ['initialization','cohort','host']:
+            with self.subTest(change=change),tempfile.TemporaryDirectory()as tmp:
+                p=self.isolation_fixture(Path(tmp))
+                if change=='initialization':Path(p['isolation']['tsne_initialization']['path']).write_bytes(b'changed')
+                elif change=='cohort':p['inputs']=dict(p['inputs'],pair_mask_sha256='0'*64)
+                else:
+                    e=p['isolation']['initialization_plan'];q=Path(e['path']);d=json.loads(q.read_text());d['execution_host']='mimas';q.write_text(json.dumps(d))
+                with self.assertRaises(ValueError):diag.verify_isolation_plan(p)
+
+    def test_isolation_adapter_forwards_explicit_intervention_and_extended_trace(self):
+        for stage in ('umap1','tsne1'):
+            with self.subTest(stage=stage),tempfile.TemporaryDirectory()as tmp:
+                root=Path(tmp);source=root/'module.py';source.write_text('# mock module')
+                method=stage[:-1];entry=cpu.record(source);shared={'path':'/bound/init.npy','bytes':640,'sha256':'a'*64}
+                plan=dict(phase='isolate64',active_stage=stage,stages=['umap1','tsne1'],diagnostic_profile='native',
+                    trace_sources={k:entry for k in ['umap','sklearn','layouts']},isolation=dict(tsne_initialization=shared),portability_helper={})
+                output=root/'stage';output.mkdir();seen={}
+                class FakeTrace:
+                    def __init__(self,path,**options):self.path=path;seen.update(options)
+                    @contextmanager
+                    def install(self,*args,**options):
+                        seen['layouts']=options['layout_module'];self.path.mkdir();yield self
+                        names=(['umap1_optimizer_scalars','umap1_epoch0_scalars','umap1_epoch1_scalars','umap1_epoch0_after_head_embedding','umap1_epoch1_after_head_embedding']
+                               if method=='umap'else['tsne1_native_initial','tsne1_initial','tsne1_initialization_source'])
+                        cpu.save(self.path/'trace.json',dict(status='complete',counts={'umap':int(method=='umap'),'tsne':int(method=='tsne')},
+                            events=[dict(name=n)for n in names],sources=plan['trace_sources'],maximum_array_bytes=16*1024**2,maximum_trace_bytes=64*1024**2,
+                            optimizer_epoch_trace=True,epoch_calls=500 if method=='umap'else 0,initialization_replays=int(method=='tsne'),
+                            tsne_initialization=shared if method=='tsne'else None))
+                def run(p,m,d):
+                    d.mkdir();result=dict(scientific_fits=dict(PCA=int(m=='tsne'),UMAP=int(m=='umap'),TSNE=int(m=='tsne'),HDBSCAN=0),outputs=[])
+                    cpu.save(d/'receipt.json',result);return result
+                layout=SimpleNamespace(__file__=str(source));umod=SimpleNamespace(__file__=str(source));tmod=SimpleNamespace(__file__=str(source))
+                upkg=SimpleNamespace(umap_=umod,layouts=layout,__version__='0.5.11')
+                manifold=SimpleNamespace(_t_sne=tmod);spkg=SimpleNamespace(manifold=manifold,__version__='1.7.1')
+                with patch.object(diag,'modules',return_value=(cpu,contract,SimpleNamespace(native_adapters=Mock(),run_stage=Mock(side_effect=run)))), \
+                     patch.object(diag,'helper',return_value=SimpleNamespace(ReducerTrace=FakeTrace)),patch.object(diag,'verify_isolation_plan'), \
+                     patch.object(diag,'effective_runtime',return_value={}),patch.object(diag,'runtime_identity_unchanged'), \
+                     patch.dict(sys.modules,{'umap':upkg,'umap.umap_':umod,'umap.layouts':layout,'sklearn':spkg,'sklearn.manifold':manifold,'sklearn.manifold._t_sne':tmod}):
+                    result=diag.run_stage(plan,stage,output)
+                self.assertTrue(seen['optimizer_epoch']);self.assertIs(seen['layouts'],layout)
+                self.assertEqual(seen['tsne_initialization'],shared if method=='tsne'else None)
+                self.assertEqual(result['isolation'],plan['isolation'])
+
     def test_native_needs_no_predecessor_but_generic_requires_closed_matching_plan(self):
         diag.verify_predecessor({'diagnostic_profile':'native'})
         with tempfile.TemporaryDirectory()as tmp:
