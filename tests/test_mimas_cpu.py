@@ -292,7 +292,7 @@ class ControllerTests(unittest.TestCase):
         launch = Mock(return_value=process)
         with patch.object(subject, '_terminate') as terminate:
             with self.assertRaisesRegex(TimeoutError, 'wall ceiling'):
-                subject.run(self.plan_path, popen=launch, clock=Mock(side_effect=[0, 31]), sleep=lambda _: None)
+                subject.run(self.plan_path, popen=launch, clock=Mock(side_effect=[0, 0, 31]), sleep=lambda _: None)
         terminate.assert_called_once_with(process)
         self.assertEqual(launch.call_count, 1)
         failure = json.loads((self.root / 'failure.json').read_text())

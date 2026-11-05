@@ -76,8 +76,8 @@ def _identity(pid, *, proc_root=PROC_ROOT):
 def _scope_settings(plan):
     scope = plan.get('containment', {})
     resources = plan['resources']
-    need(plan.get('phase') in ('probe', 'smoke') and scope.get('mode') == 'user_scope',
-         'This scope launcher supports only an approved no-fit probe or smoke')
+    need(plan.get('phase') in ('probe', 'smoke','pilot64') and scope.get('mode') == 'user_scope',
+         'This scope launcher supports only approved probes, smokes or matched64 pilots')
     for name in ('scope_memory_bytes', 'scope_tasks', 'scope_max_seconds'):
         need(type(scope.get(name)) is int and scope[name] > 0,
              'Explicit positive scope budget required: ' + name)

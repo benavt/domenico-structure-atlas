@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import types
 
 
@@ -50,6 +51,52 @@ def _regular(path):
     return path
 
 
+def _source_archive(entry, code, colors_code):
+    """Verify a tiny git archive against both already pinned staged payloads.
+
+    No archive member is extracted or executed here. The git PAX commit and
+    archive SHA bind transport provenance; the two constant source hashes remain
+    the authority for executable bytes, just as in checkout mode.
+    """
+    if (not isinstance(entry, dict) or set(entry) != {'path', 'bytes', 'sha256'}
+            or type(entry.get('bytes')) is not int or entry['bytes'] <= 0
+            or not re.fullmatch('[0-9a-f]{64}', entry.get('sha256', ''))):
+        raise ValueError('Exact native source archive path/bytes/SHA descriptor required')
+    path = _regular(entry['path'])
+    before = path.stat()
+    identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns)
+    if before.st_size != entry['bytes']:
+        raise ValueError('Native source archive size changed')
+    expected = {'src/analysis/hd_density_experiment.py': code,
+                'src/analysis/hierarchical_colors.py': colors_code}
+    seen = set()
+    with path.open('rb') as stream:
+        if hashlib.file_digest(stream, 'sha256').hexdigest() != entry['sha256']:
+            raise ValueError('Native source archive hash changed')
+        stream.seek(0)
+        with tarfile.open(fileobj=stream, mode='r:', ignore_zeros=True) as archive:
+            if archive.pax_headers.get('comment') != NATIVE_COMMIT:
+                raise ValueError('Native source archive global PAX commit differs')
+            for member in archive:
+                name = member.name.removesuffix('/') if member.isdir() else member.name
+                if name in seen:
+                    raise ValueError('Duplicate native source archive member')
+                seen.add(name)
+                if member.isdir() and name in ('src', 'src/analysis'):
+                    continue
+                if (member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or name not in expected
+                        or member.size != len(expected[name])):
+                    raise ValueError('Unexpected native source archive member/path/type')
+                with archive.extractfile(member) as payload:
+                    if payload.read() != expected[name]:
+                        raise ValueError('Native source archive payload differs from pinned staged bytes')
+            if archive.pax_headers.get('comment') != NATIVE_COMMIT or not set(expected) <= seen:
+                raise ValueError('Native source archive commit or complete payload differs')
+    if identity(path.stat()) != identity(before):
+        raise ValueError('Native source archive changed during verification')
+    return dict(path=str(path), bytes=before.st_size, sha256=entry['sha256'])
+
+
 def load_native(source):
     """Load only reviewed bytes; private path/commit bindings belong in the plan."""
     if (not isinstance(source, dict) or source.get('commit') != NATIVE_COMMIT
@@ -65,11 +112,16 @@ def load_native(source):
     colors_code = colors.read_bytes()
     if hashlib.sha256(colors_code).hexdigest() != COLORS_SHA256:
         raise ValueError('Native lineage helper hash changed')
-    root = path.parents[2]
-    commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'],
-                                     text=True, stderr=subprocess.PIPE).strip()
-    if commit != NATIVE_COMMIT:
-        raise ValueError('Native source checkout revision changed')
+    provenance = {}
+    if 'source_archive' in source:
+        provenance['source_archive'] = _source_archive(source['source_archive'], code, colors_code)
+        commit = NATIVE_COMMIT
+    else:
+        root = path.parents[2]
+        commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'],
+                                         text=True, stderr=subprocess.PIPE).strip()
+        if commit != NATIVE_COMMIT:
+            raise ValueError('Native source checkout revision changed')
     # Relative imports resolve to the reviewed sibling bytes, not another clone.
     package = '_rbp_density_native_'+NATIVE_SHA256[:12]+'_'+str(next(_LOADS))
     namespace = types.ModuleType(package)
@@ -86,7 +138,7 @@ def load_native(source):
             loaded.append(name)
             exec(compile(content, str(filename), 'exec'), module.__dict__)
         return module, dict(path=str(path), sha256=NATIVE_SHA256, commit=commit,
-                            hierarchical_colors_sha256=COLORS_SHA256)
+                            hierarchical_colors_sha256=COLORS_SHA256, **provenance)
     except BaseException:
         for name in loaded:sys.modules.pop(name, None)
         sys.modules.pop(package, None)

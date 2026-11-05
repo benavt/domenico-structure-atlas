@@ -5,6 +5,7 @@ once in a fresh child, with exact source and input bindings and no retry.
 """
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -171,7 +172,7 @@ def _terminate(process):
 def setup_check(plan_path):
     """Check the existing bootstrap and allocation before any venv/install."""
     plan = verify(plan_path)
-    if plan['phase'] != 'smoke':
+    if plan['phase'] != 'smoke' and not (plan['phase']=='pilot64' and plan.get('create_environment') is True):
         raise ValueError('Environment setup is only approved with the smoke phase')
     bootstrap = plan['bootstrap']
     bound(bootstrap['binary'])
@@ -250,6 +251,12 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
     root.mkdir(parents=False, exist_ok=False)
     save(root / 'owner.json', {'plan_sha256': sha(plan_path), 'uid': os.getuid()})
     save(root / 'resource-observation.json', observation)
+    save(root / 'runtime.json', dict(python=sys.version, executable=sys.executable,
+         prefix=sys.prefix, packages={item.metadata['Name']:item.version
+         for item in importlib.metadata.distributions()},
+         threads={key:env[key] for key in contract.THREAD_VARIABLES}
+         if hasattr(contract, 'THREAD_VARIABLES') else {},
+         bootstrap=plan.get('bootstrap'), cpp_closure=plan.get('runtime_cpp_closure', [])))
     if plan['phase'] == 'probe':
         save(root / 'completion.json', {'status': 'resource_probe_complete',
              'plan_sha256': sha(plan_path), 'fit_containment_verified': observation.get('fit_containment_verified', False),
@@ -267,9 +274,10 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
                 raise ValueError('Cache/writer directory escapes this run')
             path.mkdir(parents=True, exist_ok=True)
     phases = ('smoke',) if plan['phase'] == 'smoke' else STAGES[plan['phase']]
-    outputs = {};started = clock()
+    outputs = {};timings={};started = clock()
     try:
         for stage in phases:
+            stage_started=clock()
             output = root / 'stages' / stage
             if stage != 'smoke':
                 output.mkdir()
@@ -327,10 +335,13 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
                     if not artifact_path.is_relative_to(root):
                         raise ValueError('Scientific output escapes the owned run')
             outputs[stage] = record(receipt)
+            timings[stage]=clock()-stage_started
+            save(root / ('resource-final-' + stage + '.json'), contract.observe(plan, environ=env))
             check_disk(plan, include_sizes=True)
         save(root / 'completion.json', {'status': result['status'] if plan['phase'] == 'smoke' else 'diagnostic_pilot_complete',
              'fit_ready': result.get('fit_ready', False) if plan['phase'] == 'smoke' else True,
              'plan_sha256': sha(plan_path), 'phase': plan['phase'], 'stage_receipts': outputs,
+             'stage_elapsed_seconds':timings,
              'maximum_projection_fits': plan['maximum_projection_fits'],
              'maximum_hdbscan_extractions': plan['maximum_hdbscan_extractions'],
              'standard_deliverables_complete': False})

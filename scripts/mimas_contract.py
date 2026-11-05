@@ -347,6 +347,8 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
     process = _unlinked(_absolute(proc_root) / str(pid))
     root = _unlinked(_absolute(cgroup_root)); locations = _locations(process, root)
     issues = []
+    local = plan.get('execution_host') == 'pax'
+    scheduler = None
     job_id = env.get('SLURM_JOB_ID')
     _need(job_id is None or isinstance(job_id, str), 'Invalid Slurm job ID')
     nodes = [_positive(env[k]) for k in ('SLURM_NNODES', 'SLURM_JOB_NUM_NODES') if k in env]
@@ -354,7 +356,16 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
     slurm_verified = bool(job_id and job_id.isdecimal() and int(job_id) > 0 and nodes
                           and all(n == 1 for n in nodes) and tasks == 1
                           and cpus is not None and cpus <= resources['maximum_cpus'])
-    if not slurm_verified:
+    if local:
+        uid = os.getuid();unit = plan.get('unit_name','')
+        _need(re.fullmatch(r'[A-Za-z0-9_-]+\.service',unit), 'Exact local service name required')
+        expected = '/user.slice/user-'+str(uid)+'.slice/user@'+str(uid)+'.service/app.slice/'+unit
+        scheduler = dict(kind='systemd-user',unit=unit,control_group=expected,
+                         verified=(_text(process/'cgroup')=='0::'+expected
+                                   and plan['resources'].get('required_uid')==uid))
+        if not scheduler['verified']:
+            issues.append('Matching owned Pax systemd service is unverified')
+    elif not slurm_verified:
         issues.append('A matching single-node single-task Slurm CPU allocation is unverified')
     actual_python = str(_absolute(runtime_python or sys.executable))
     actual_prefix = str(_absolute(runtime_prefix or sys.prefix))
@@ -411,14 +422,19 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
         fit_issues.append('Finite effective PID containment/usage within the approved budget is unverified')
     if not sys.flags.no_user_site:
         fit_issues.append('Interpreter startup did not disable the user site')
-    return dict(schema_version=1, status='blocked' if issues else 'smoke_observed',
+    return dict(schema_version=1, execution_host='pax' if local else 'mimas',scheduler=scheduler,
+        status='blocked' if issues else 'smoke_observed',
         smoke_containment_verified=not issues, fit_containment_verified=not fit_issues,
         blocking_reasons=issues, fit_blocking_reasons=fit_issues,
         resources=dict(resources), environment=environment, slurm=dict(verified=slurm_verified, job_id=job_id, nodes=nodes, tasks=tasks, cpus_per_task=cpus),
         runtime=dict(verified=runtime_verified, python=actual_python, prefix=actual_prefix,
                      expected_python=str(python), expected_prefix=str(prefix), no_user_site=bool(sys.flags.no_user_site)),
         memory=dict(verified=memory_verified, cgroup_version=memory['version'] if memory else None,
-                    limit_bytes=memory_limit, current_bytes=memory_usage, records=memory_records),
+                    limit_bytes=memory_limit, current_bytes=memory_usage, records=memory_records,
+                    peak_bytes=_positive(_text(memory['leaf'] / 'memory.peak'), zero=True) if unified else None),
+        kernel_counters={name:_text(locations['unified']['leaf'] / name)
+                         for name in ('cpu.stat', 'io.stat', 'memory.events')}
+                         if locations.get('unified') else {},
         swap=dict(verified=swap_verified, limit_bytes=swap_limit, current_bytes=swap_usage,
                   combined_v1_limit_bytes=combined if not unified else None, semantics=swap_semantics, records=swap_records),
         pids=dict(verified=pids_verified, limit=pids_limit, current=pids_usage, records=pids_records), cpu=cpu,
@@ -432,7 +448,8 @@ def require_fit_ready(observation, *, require_actual_environment=True):
           and not observation.get('blocking_reasons') and not observation.get('fit_blocking_reasons'),
           'Scientific fits blocked: required Slurm/runtime/cgroup containment is unverified')
     _need(type(require_actual_environment) is bool, 'Explicit boolean environment evidence policy required')
-    for key in ('slurm', 'runtime', 'memory', 'swap', 'pids', 'cpu', 'environment'):
+    local = observation.get('execution_host') == 'pax'
+    for key in (('scheduler' if local else 'slurm'), 'runtime', 'memory', 'swap', 'pids', 'cpu', 'environment'):
         _need(observation.get(key, {}).get('verified') is True, 'Scientific fits blocked: unverified ' + key)
     if require_actual_environment:
         _need(observation['environment'].get('source') == 'process_environment',
@@ -442,13 +459,19 @@ def require_fit_ready(observation, *, require_actual_environment=True):
           and observation['runtime']['prefix'] == observation['runtime']['expected_prefix'],
           'Scientific fits blocked: runtime/startup scope differs')
     resources = observation['resources']; slurm = observation['slurm']
-    _need(isinstance(slurm['job_id'], str) and slurm['job_id'].isdecimal()
+    if local:
+        scheduler=observation['scheduler'];uid=resources['required_uid']
+        _need(scheduler.get('kind')=='systemd-user'
+              and scheduler.get('control_group')=='/user.slice/user-'+str(uid)+'.slice/user@'+str(uid)+'.service/app.slice/'+scheduler['unit'],
+              'Scientific fits blocked: local service scope differs')
+    else:
+      _need(isinstance(slurm['job_id'], str) and slurm['job_id'].isdecimal()
           and int(slurm['job_id']) > 0 and slurm['nodes']
           and all(type(n) is int and n == 1 for n in slurm['nodes'])
           and type(slurm['tasks']) is int and slurm['tasks'] == 1
           and type(slurm['cpus_per_task']) is int
           and 0 < slurm['cpus_per_task'] <= resources['maximum_cpus'],
-          'Scientific fits blocked: scheduler scope differs')
+            'Scientific fits blocked: scheduler scope differs')
     _need(_absolute(observation['runtime']['expected_python']).is_relative_to(
               _absolute(observation['runtime']['expected_prefix'])),
           'Scientific fits blocked: interpreter leaves its runtime prefix')

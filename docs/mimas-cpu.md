@@ -127,3 +127,32 @@ match the bound base binary. Bind the base C++/GCC library hashes as runtime
 closure evidence. Do not use a broad LD_LIBRARY_PATH or preload workaround.
 The base installation remains read-only and must be retained. Preserve failed
 copied environments; a successor approved plan creates a fresh linked venv.
+
+## Matched SERCA-64 comparison
+
+The first numerical pilot uses the **same 64 originals, row order and raw F16
+values on Mimas and Pax**, with the accepted 894-residue core (canonical 58–951).
+Selection is deterministic and balances available methods; rejection flags stay
+visible. Its 64 × 399,171 input matrix is about 49 MiB. Full-cohort projections
+are context, not a matched reference.
+
+Both hosts use the same pinned library wheel, dependency wheels, configuration,
+seeds and archived density provider. Pax gets a separate linked environment;
+Mimas reuses its accepted linked environment. Each host has an 8 GiB kernel RAM
+cap, zero swap, 64 tasks, single-threaded workers and a one-hour deadline. Pax
+also retains host-pressure admission and sustained-pressure stopping. No shared
+runtime, scheduler setting or ongoing full-cohort analysis changes.
+
+`pilot_compare.py` reads closed saved outputs only. It checks raw features,
+model identities, flags, native source hashes and masks, then reports PCA
+geometry, nonlinear neighborhood diagnostics and label agreement. Nonlinear
+coordinate differences require review; degenerate all-noise/one-group results
+are not structural validation. Runtime facts, timings and resource receipts
+remain separate from numerical agreement. This small pilot establishes neither
+a full-cohort memory ceiling nor completion of standard scientific deliverables.
+
+Freeze both host plans and the comparison contract before approval. Never infer
+approval from an earlier smoke. Run Mimas first, collect only verified closed
+receipts/selected arrays, and run the identical Pax reference when its admission
+checks permit. A failure stops once and preserves evidence; it does not trigger
+an automatic retry or resume.

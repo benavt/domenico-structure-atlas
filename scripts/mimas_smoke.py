@@ -241,12 +241,17 @@ def run_smoke(plan, output, check=lambda: None, *, adapters=None):
         if spec.get('density_provider') is not None:
             def provider():
                 source = spec['density_provider']; path = _bound(source, guarded)
-                checkout = Path(source['checkout']).resolve()
-                need(path.resolve().is_relative_to(checkout), 'Density provider leaves its approved checkout')
-                command = ['git', '-C', str(checkout), 'rev-parse', 'HEAD']
-                result = adapters['run'](command, cwd=str(cwd), env=environment, capture_output=True, text=True, timeout=timeout, check=False)
-                need(result.returncode == 0 and result.stdout.strip() == source['commit'], 'Density source HEAD differs')
+                if 'source_archive' in source:
+                    _bound(source['source_archive'], guarded)
+                else:
+                    checkout = Path(source['checkout']).resolve()
+                    need(path.resolve().is_relative_to(checkout), 'Density provider leaves its approved checkout')
+                    command = ['git', '-C', str(checkout), 'rev-parse', 'HEAD']
+                    result = adapters['run'](command, cwd=str(cwd), env=environment, capture_output=True, text=True, timeout=timeout, check=False)
+                    need(result.returncode == 0 and result.stdout.strip() == source['commit'], 'Density source HEAD differs')
                 module, proof = adapters['provider'](source)
+                if 'source_archive' in source:
+                    need(proof.get('source_archive') == source['source_archive'], 'Density provider archive verification proof differs')
                 for name in ('fit_selection', 'fit_diagnostics', 'structural_labels'):
                     need(callable(getattr(module, name, None)), 'Density provider callable missing: '+name)
                 return dict(status='verified_import_only', source=source, proof=proof, scientific_fits=0)
