@@ -51,13 +51,14 @@ def save(path, value):
         stream.write('\n');stream.flush();os.fsync(stream.fileno())
 
 
-def verify(plan_path):
+def verify(plan_path, *, require_approval=True):
     path = Path(plan_path).absolute()
     plan = json.loads(path.read_text())
-    approval = json.loads((path.parent / 'approval.json').read_text())
-    if (approval.get('approved') is not True or approval.get('plan_sha256') != sha(path)
-            or plan.get('operation') != 'mimas-cpu-validation'
-            or plan.get('phase') not in STAGES):
+    if require_approval:
+        approval = json.loads((path.parent / 'approval.json').read_text())
+        if approval.get('approved') is not True or approval.get('plan_sha256') != sha(path):
+            raise ValueError('Exact approved Mimas CPU validation plan required')
+    if (plan.get('operation') != 'mimas-cpu-validation' or plan.get('phase') not in STAGES):
         raise ValueError('Exact approved Mimas CPU validation plan required')
     phase = plan['phase']
     if (plan.get('stages') != list(STAGES[phase])
@@ -82,12 +83,13 @@ def verify(plan_path):
             bound(entry)
             if entry not in plan['frozen_files']:
                 raise ValueError('Diagnostic source is not frozen')
-    if phase == 'isolate64':
-        import reducer_diagnostic
-        reducer_diagnostic.verify_isolation_plan(plan)
     for name in ('mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py'):
         if str(source / name) not in entries:
             raise ValueError('Controller dependency is not frozen: ' + name)
+    if phase == 'isolate64':
+        _modules()  # -I omits the script directory; add only these bound siblings.
+        import reducer_diagnostic
+        reducer_diagnostic.verify_isolation_plan(plan)
     if plan.get('containment'):
         scope = plan['containment']
         if (scope.get('mode') != 'user_scope'
@@ -392,13 +394,16 @@ def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.s
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['verify', 'setup-check', 'smoke', 'run', 'child'])
+    parser.add_argument('action', choices=['preflight', 'verify', 'setup-check', 'smoke', 'run', 'child'])
     parser.add_argument('plan')
     parser.add_argument('stage', nargs='?')
     parser.add_argument('context', nargs='?')
     parser.add_argument('context_sha', nargs='?')
     args = parser.parse_args()
-    if args.action == 'verify':
+    if args.action == 'preflight':
+        verify(args.plan, require_approval=False)
+        print('Frozen bindings and saved-input provenance verified; no execution approval, fit or install.')
+    elif args.action == 'verify':
         verify(args.plan)
         print('Exact plan approval and frozen source bindings verified; no fit or install.')
     elif args.action == 'setup-check':
