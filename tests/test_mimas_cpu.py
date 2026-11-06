@@ -127,6 +127,38 @@ class ControllerTests(unittest.TestCase):
                     subject.run(self.plan_path, popen=Mock(side_effect=AssertionError('must not spawn')))
                 self.assertFalse(self.root.exists())
 
+    def test_isolated_cli_preflight_imports_bound_siblings_but_cannot_start_work(self):
+        # Actual -I subprocess catches path defects hidden by this test runner.
+        from test_reducer_diagnostic import ReceiptTests
+        fixture = ReceiptTests().isolation_fixture(self.directory)
+        source = Path(subject.__file__).absolute().parent
+        stub = self.directory/'stub.json'; stub.write_text('{}')
+        entry = subject.record(stub)
+        value = self.plan('isolate64', diagnostic_profile='native', create_environment=False,
+            native=fixture['native'], inputs=fixture['inputs'], isolation=fixture['isolation'],
+            portability_helper=entry, runtime_payload=entry,
+            trace_sources={key:entry for key in ('umap','sklearn','layouts')}, dependency_sources=[])
+        value['frozen_files'] += fixture['frozen_files'] + [entry,subject.record(source/'reducer_diagnostic.py')]
+        self.write_plan(value); (self.directory/'approval.json').unlink()
+        for action in ('preflight','verify','run'):
+            result = subprocess.run([sys.executable,'-I','-B',subject.__file__,action,str(self.plan_path)],
+                                    text=True,capture_output=True,timeout=10)
+            if action == 'preflight':
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertIn('no execution approval',result.stdout)
+            else:
+                self.assertNotEqual(result.returncode,0)
+                self.assertIn('approval.json',result.stderr)
+            self.assertFalse(self.root.exists())
+
+    def test_readonly_preflight_still_rejects_changed_bound_inputs(self):
+        value=self.plan();(self.directory/'approval.json').unlink()
+        artifact=self.directory/'source.json';artifact.write_text('{}')
+        value['frozen_files'].append(subject.record(artifact));self.plan_path.write_text(json.dumps(value))
+        artifact.write_text('[]')
+        with self.assertRaisesRegex(ValueError,'Bound artifact missing or changed'):
+            subject.verify(self.plan_path,require_approval=False)
+
     def test_runtime_link_is_allowed_only_to_the_bound_base_binary(self):
         base=self.directory/'base-python';base.write_bytes(b'bound base ELF')
         prefix=self.directory/'runtime';(prefix/'bin').mkdir(parents=True)

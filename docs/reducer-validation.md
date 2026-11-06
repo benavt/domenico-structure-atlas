@@ -53,3 +53,11 @@ It distinguishes a discarded native t-SNE start from effective optimizer inputs.
 It reports failed numerical gates honestly; it never certifies labels/capacity,
 submits fits or changes production stages. Further strict-math/label/scaling tests
 remain separate scopes.
+
+Before requesting execution approval, run the exact isolated CLI against each
+staged host plan: `python -I -B scripts/mimas_cpu.py preflight PLAN`. This reads
+frozen source/input/provenance bindings without requiring or granting approval,
+submitting work, importing estimators or creating a run. It is distinct from
+`verify`, `run`, `child`, `setup-check` and `smoke`, which retain exact approval
+checks. Source tests launch this real `-I` entry point so the test runner's own
+module path cannot hide bootstrap import errors.
