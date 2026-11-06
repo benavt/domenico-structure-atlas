@@ -78,12 +78,13 @@ def verify_pax1000_predecessor(plan):
 def verify(proof_entry):
     import pilot_compare as geometry
     proof=data(proof_entry)
-    if proof.get('operation')!='closed-saved-umap64-correspondence' or set(proof['runs'])!={'pax','mimas'}:
+    rows=1000 if proof.get('operation')=='closed-saved-umap1000-correspondence'else 64
+    if proof.get('operation')not in ('closed-saved-umap64-correspondence','closed-saved-umap1000-correspondence') or set(proof['runs'])!={'pax','mimas'}:
         raise ValueError('Exact accepted correspondence proof required')
     recipe=data(proof['recipe']);runs={};identity=None
     for host,spec in proof['runs'].items():
         plan=data(spec['plan']);locations=data(spec['locations']);done=data(spec['completion'],locations)
-        if (plan['execution_host']!=host or plan['phase']!=('isolate64'if host=='pax'else'curve64')
+        if (plan['execution_host']!=host or plan['phase']!=('curve1000'if rows==1000 else'isolate64'if host=='pax'else'curve64')
                 or plan['diagnostic_profile']!='native' or done['status']!='diagnostic_pilot_complete'
                 or done['plan_sha256']!=spec['plan']['sha256']):raise ValueError('Unclosed saved reference')
         r=data(done['stage_receipts']['umap1'],locations);geometry._source_proof(r,plan)
@@ -94,7 +95,7 @@ def verify(proof_entry):
             raise ValueError('Changed saved native protocol')
         ids=r['models'];current=dict(target=r['target'],models=ids,flags=r['model_flags'],
             feature_sha=r['inputs']['feature_sha256'],mask_sha=r['inputs']['pair_mask_sha256'])
-        if (len(ids)!=64 or len(set(ids))!=64
+        if (len(ids)!=rows or len(set(ids))!=rows
                 or hashlib.sha256('\n'.join(ids).encode()).hexdigest()!=r['inputs']['model_order_sha256']):
             raise ValueError('Wrong saved cohort/order')
         if identity is None:identity=current
@@ -112,19 +113,19 @@ def verify(proof_entry):
             events[event['name']]={k:v for k,v in event.items()if k!='artifact'}
         scalars=events['umap1_optimizer_scalars']['values']
         if any(scalars[k]!=recipe[k]for k in ['a','b']):raise ValueError('Saved curve differs')
-        if host=='mimas':
+        if host=='mimas'or rows==1000:
             if (t.get('curve_applications')!=1 or t['umap_curve']!=plan['curve_control']['recipe']
                     or any(t['umap_curve'][k]!=proof['recipe'][k]for k in ['bytes','sha256'])
                     or events['umap_curve_effective']['values']!=recipe):raise ValueError('Mimas curve was not applied')
-        runs[host]=dict(events=events,coordinates=embedding_member(r['projection'],locations))
+        runs[host]=dict(events=events,coordinates=embedding_member(r['projection'],locations,rows=rows))
     left,right=runs['pax'],runs['mimas'];names=list(left['events'])
     required={'umap1_graph_data','umap1_graph_indices','umap1_graph_indptr','umap1_initial','umap1_rng',
               'umap1_optimizer_scalars','umap1_epoch0_scalars','umap1_epoch1_scalars','umap1_epoch1_after_head_embedding'}
     if (len(names)<35 or not required<=set(names)or not set(names)<=set(right['events'])
             or any(left['events'][k]!=right['events'][k]for k in names)
             or left['coordinates']!=right['coordinates']):raise ValueError('Saved exact correspondence gate fails')
-    return dict(status='saved_umap64_correspondence_verified',projection_fits=0,common_checkpoints=len(names),
+    return dict(status='saved_umap'+str(rows)+'_correspondence_verified',projection_fits=0,common_checkpoints=len(names),
         models=identity['models'],
         coordinates=left['coordinates'],model_order_sha256=hashlib.sha256('\n'.join(identity['models']).encode()).hexdigest(),
         feature_sha256=identity['feature_sha'],mask_sha256=identity['mask_sha'],recipe=proof['recipe'],
-        new_pax_controlled_fit_completed=False,reference_policy='Reuse accepted closed native Pax result; new Pax64 confirmation was refused before fitting')
+        new_pax_controlled_fit_completed=rows==1000,reference_policy='Both controlled1000 fits closed'if rows==1000 else'Reuse accepted closed native Pax result; new Pax64 confirmation was refused before fitting')

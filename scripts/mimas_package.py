@@ -100,7 +100,7 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
     seconds = plan['resources']['maximum_wall_seconds']
     if (type(cpus) is not int or not 1 <= cpus <= 4 or type(memory) is not int
             or memory <= 0 or type(overhead) is not int or not 0 <= overhead <= 512*1024**2
-            or type(seconds) is not int or not 60 <= seconds <= 3600):
+            or type(seconds) is not int or not 60 <= seconds <= (24*3600 if plan.get('phase')=='serca-full'else 3600)):
         raise ValueError('Bounded smoke resources required')
     if not Path(bootstrap_python).is_absolute():
         raise ValueError('Absolute existing Python 3.11 bootstrap required')
@@ -138,7 +138,7 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
                   q(bootstrap_python) + ' -I -m venv '+flag+' ' + q(plan['runtime_prefix']),
                   q(plan['runtime_python']) + ' -I -m pip install --no-index --require-hashes --only-binary=:all: --find-links ' + q(plan['wheelhouse']) + ' -r ' + q(plan['requirements'])]
     phase=plan.get('phase','smoke')
-    if phase not in ('smoke','pilot64','repro64','isolate64','curve64','curve1000'):
+    if phase not in ('smoke','pilot64','repro64','isolate64','curve64','curve1000','serca-full'):
         raise ValueError('Explicit supported smoke/pilot batch phase required')
     action='smoke' if phase=='smoke' else 'run'
     lines += ['exec ' + q(plan['runtime_python']) + ' -I ' + q(plan['runner']) + ' '+action+' ' + q(str(plan_path))]

@@ -156,3 +156,44 @@ approval from an earlier smoke. Run Mimas first, collect only verified closed
 receipts/selected arrays, and run the identical Pax reference when its admission
 checks permit. A failure stops once and preserves evidence; it does not trigger
 an automatic retry or resume.
+
+## Full accepted SERCA continuation
+
+The separately approved `serca-full` phase keeps all 5,072 accepted models and
+canonical residues 58–951, including rejection flags. A closed paired 1,000-model
+proof must reverify exact coordinates and all recorded checkpoints before launch.
+The three accepted Pax projections are imported into owned sidecars with identical
+coordinate values/dtypes and explicitly translated native model paths. Originals
+and the accepted source artifacts remain unchanged.
+
+One fixed-curve full-cohort UMAP fit exercises the approximate-neighbor path.
+It must match the accepted full Pax coordinate bytes before either primary label
+validation or recursive HDBSCAN can start. A mismatch retains the diagnostic trace
+and stops once. No standalone PCA or t-SNE is refitted. The primary repeats use
+the same public 2D curve recipe; the CASP17 10D density settings, including its
+native zero-minimum-distance curve, are preserved. This does not claim a new
+cross-host density-label comparison.
+
+The complete budget is at most 18 UMAP fits (one full-cohort check, two primary
+repeat fits and at most fifteen density fits), thirty HDBSCAN extractions and
+zero PCA/t-SNE fits. Children run serially under verified job-specific RAM,
+zero-swap, task, CPU-affinity, deadline and disk controls. Longer batch deadlines
+are supported only for this explicit production phase. HDBSCAN is the default
+label view; every model and explicit noise remain in the saved outputs.
+
+Source tests, successful pilots and this adapter do not authorize the full run.
+Freeze the actual source, installed runtime, originals/feature hashes, saved
+projection proofs, destinations and resource budgets before exact execution
+approval. Model selection, molecular reports and publication remain later stages.
+
+Production admission requires at least 128 GiB of currently available node RAM.
+During each child, a 32 GiB host reserve and the actual job-memory PSI interval
+are checked every five seconds; three consecutive violations stop this job.
+The memory-full threshold, when exposed, is 0.5% per measured interval, without
+using a decaying average as an interval counter. Mimas currently exposes no PSI
+files. Missing PSI is recorded as unavailable; the monitor still enforces the
+host reserve and stops after three samples above 60 GiB of actual job memory,
+below the unchanged 64 GiB hard cap. It does not set a reclaim-triggering kernel
+memory-high limit or change host controls. A previously readable PSI counter
+that disappears remains an error. I/O counters remain explicitly unavailable
+when the kernel does not expose them; this is never reported as zero I/O.
