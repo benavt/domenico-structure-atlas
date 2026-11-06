@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import mimas_pilot as pilot
+import hpc_pilot as pilot
 import pilot_compare as comparison
 import pilot_saved_manifest as subject
 
@@ -32,7 +32,7 @@ class ManifestTests(unittest.TestCase):
             features=dict(path='/must-not-open/features.npy', bytes=51094016, sha256='b' * 64))
         host_plans, hosts = {}, {}
         self.plans = {}
-        for hostname in ('pax', 'mimas'):
+        for hostname in ('workstation', 'hpc'):
             root = self.root / hostname
             root.mkdir()
             rows = [dict(model=name, local_path='/must-not-open/' + hostname + '/' + name + '.pdb',
@@ -108,13 +108,13 @@ class ManifestTests(unittest.TestCase):
         self.request['hosts'][host]['completion'] = put(path, value)
 
     def mutate_receipt(self, stage, mutate):
-        completion_path = Path(self.request['hosts']['mimas']['completion']['path'])
+        completion_path = Path(self.request['hosts']['hpc']['completion']['path'])
         completion = json.loads(completion_path.read_text())
         path = Path(completion['stage_receipts'][stage]['path'])
         receipt = json.loads(path.read_text())
         mutate(receipt)
         completion['stage_receipts'][stage] = put(path, receipt)
-        self.request['hosts']['mimas']['completion'] = put(completion_path, completion)
+        self.request['hosts']['hpc']['completion'] = put(completion_path, completion)
 
     def test_success_is_metadata_only_and_does_not_claim_comparison_passed(self):
         original = builtins.__import__
@@ -128,17 +128,17 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(result['assembly']['status'], 'saved_inputs_verified_not_compared')
         self.assertEqual(result['assembly']['numerical_comparisons'], 0)
         self.assertEqual(result['assembly']['feature_matrices_opened'], 0)
-        self.assertEqual(set(result['hosts']['pax']['receipts']), set(comparison.STAGES))
+        self.assertEqual(set(result['hosts']['workstation']['receipts']), set(comparison.STAGES))
 
     def test_completion_must_be_closed_success_for_exact_plan(self):
         for field, value in [('status', 'failed'), ('plan_sha256', '0' * 64),
                              ('fit_ready', False), ('phase', 'umap-full')]:
             saved = deepcopy(self.request)
-            before = Path(self.request['hosts']['mimas']['completion']['path']).read_text()
-            self.mutate_completion('mimas', lambda result:result.update(**{field:value}))
+            before = Path(self.request['hosts']['hpc']['completion']['path']).read_text()
+            self.mutate_completion('hpc', lambda result:result.update(**{field:value}))
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'completion'):
                 self.assemble()
-            Path(saved['hosts']['mimas']['completion']['path']).write_text(before)
+            Path(saved['hosts']['hpc']['completion']['path']).write_text(before)
             self.request = saved
         self.assertFalse((self.root / 'derived-manifest.json').exists())
 
@@ -150,21 +150,21 @@ class ManifestTests(unittest.TestCase):
         self.mutate_receipt('umap', lambda result:result['scientific_fits'].update(UMAP=2))
         with self.assertRaisesRegex(ValueError, 'fit accounting'):
             self.assemble()
-        self.mutate_completion('mimas', lambda result:result['stage_receipts'].pop('density0'))
+        self.mutate_completion('hpc', lambda result:result['stage_receipts'].pop('density0'))
         with self.assertRaisesRegex(ValueError, 'five completed'):
             self.assemble()
 
     def test_changed_artifact_is_rejected_as_bytes_without_parsing(self):
-        (self.root / 'mimas/umap.npz').write_bytes(b'Changed after closure')
+        (self.root / 'hpc/umap.npz').write_bytes(b'Changed after closure')
         with self.assertRaises(ValueError):
             self.assemble()
         self.assertFalse((self.root / 'derived-manifest.json').exists())
 
     def test_source_pin_and_runtime_identity_are_verified(self):
-        runtime_path = Path(self.request['hosts']['mimas']['runtime']['path'])
+        runtime_path = Path(self.request['hosts']['hpc']['runtime']['path'])
         runtime = json.loads(runtime_path.read_text())
         runtime['prefix'] = '/other/runtime'
-        self.request['hosts']['mimas']['runtime'] = put(runtime_path, runtime)
+        self.request['hosts']['hpc']['runtime'] = put(runtime_path, runtime)
         with self.assertRaisesRegex(ValueError, 'Runtime facts'):
             self.assemble()
         self.mutate_receipt('pca', lambda result:result.update(native_library_commit='f' * 40))
@@ -172,8 +172,8 @@ class ManifestTests(unittest.TestCase):
             self.assemble()
 
     def test_local_copy_of_bound_remote_plan_may_change_only_path(self):
-        entry = self.contract['host_plans']['mimas']
-        self.contract['host_plans']['mimas'] = dict(entry, path='/remote/frozen/execution-plan.json')
+        entry = self.contract['host_plans']['hpc']
+        self.contract['host_plans']['hpc'] = dict(entry, path='/remote/frozen/execution-plan.json')
         self.request['contract'] = put(self.contract_path, self.contract)
         self.assertEqual(self.assemble()['assembly']['status'], 'saved_inputs_verified_not_compared')
 
@@ -186,12 +186,12 @@ class ManifestTests(unittest.TestCase):
             receipt['projection'] = remote
             receipt['outputs'] = [remote]
         self.mutate_receipt('umap', relocate)
-        path = Path(self.request['hosts']['mimas']['relocations']['path'])
-        self.request['hosts']['mimas']['relocations'] = put(path, locations)
+        path = Path(self.request['hosts']['hpc']['relocations']['path'])
+        self.request['hosts']['hpc']['relocations'] = put(path, locations)
         result = self.assemble()
-        self.assertEqual(result['hosts']['mimas']['artifact_locations'], locations)
+        self.assertEqual(result['hosts']['hpc']['artifact_locations'], locations)
         locations['/remote/run/umap.npz']['sha256'] = 'f' * 64
-        self.request['hosts']['mimas']['relocations'] = put(path, locations)
+        self.request['hosts']['hpc']['relocations'] = put(path, locations)
         with self.assertRaisesRegex(ValueError, 'Relocation changed'):
             self.assemble('bad-map.json')
 

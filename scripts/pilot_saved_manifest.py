@@ -64,10 +64,10 @@ def assemble(request, output, *, check=lambda: None):
          and expected.get('retained_reference_positions') == list(range(57, 951))
          and expected.get('pair_mask_sha256') == pilot.SERCA_PAIR_MASK,
          'Only the frozen SERCA-64 accepted core may be assembled')
-    need(set(request['hosts']) == {'pax', 'mimas'}
-         and set(contract['host_plans']) == {'pax', 'mimas'}, 'Exactly two planned hosts are required')
+    need(set(request['hosts']) == {'workstation', 'hpc'}
+         and set(contract['host_plans']) == {'workstation', 'hpc'}, 'Exactly two planned hosts are required')
     hosts, completions, identities, protocols, totals = {}, {}, {}, {}, {}
-    for name in ('pax', 'mimas'):
+    for name in ('workstation', 'hpc'):
         check()
         spec = request['hosts'][name]
         # A relocation map is an explicit bound JSON file, including when empty.
@@ -83,7 +83,7 @@ def assemble(request, output, *, check=lambda: None):
              'Host plan content differs from the frozen comparison contract')
         plan = comparison._read(plan_entry, locations=locations, check=check)
         protocols[name] = comparison._protocol(plan, expected, locations, check)
-        need(plan.get('execution_host', 'mimas') == name, 'Execution plan is for the other host')
+        need(plan.get('execution_host', 'hpc') == name, 'Execution plan is for the other host')
         names, paths, identities[name] = comparison._members(plan, expected, locations, check)
         flags = [row['flags'] for row in identities[name]]
         completion = comparison._read(spec['completion'], locations=locations, check=check)
@@ -141,8 +141,8 @@ def assemble(request, output, *, check=lambda: None):
                            artifact_locations=locations)
         completions[name] = dict(completion=spec['completion'], relocations=spec['relocations'])
         totals[name] = fit_total
-    need(identities['pax'] == identities['mimas'], 'Original cohort identities or physicality flags differ')
-    need(protocols['pax'] == protocols['mimas'], 'Host native settings/source protocol differs')
+    need(identities['workstation'] == identities['hpc'], 'Original cohort identities or physicality flags differ')
+    need(protocols['workstation'] == protocols['hpc'], 'Host native settings/source protocol differs')
     value = dict(schema_version=1, operation='paired-pilot-saved-comparison',
         contract=contract_entry, hosts=hosts,
         assembly=dict(status='saved_inputs_verified_not_compared', completions=completions,

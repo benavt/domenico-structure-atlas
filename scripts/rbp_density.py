@@ -54,7 +54,7 @@ def _regular(path):
 def _source_archive(entry, code, colors_code):
     """Verify a tiny git archive against both already pinned staged payloads.
 
-    No archive member is extracted or executed here. The git PAX commit and
+    No archive member is extracted or executed here. The git WORKSTATION commit and
     archive SHA bind transport provenance; the two constant source hashes remain
     the authority for executable bytes, just as in checkout mode.
     """
@@ -76,7 +76,7 @@ def _source_archive(entry, code, colors_code):
         stream.seek(0)
         with tarfile.open(fileobj=stream, mode='r:', ignore_zeros=True) as archive:
             if archive.pax_headers.get('comment') != NATIVE_COMMIT:
-                raise ValueError('Native source archive global PAX commit differs')
+                raise ValueError('Native source archive global WORKSTATION commit differs')
             for member in archive:
                 name = member.name.removesuffix('/') if member.isdir() else member.name
                 if name in seen:

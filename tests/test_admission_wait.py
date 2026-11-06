@@ -5,8 +5,8 @@ import sys,tempfile,unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-import pax_pilot_guard as subject
-import mimas_cpu as cpu
+import workstation_pilot_guard as subject
+import hpc_cpu as cpu
 
 
 class WaitTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class WaitTests(unittest.TestCase):
     def test_destination_needs_a_closed_reference_before_any_fit(self):
         import reducer_diagnostic as diag
         with tempfile.TemporaryDirectory()as tmp:
-            plan=dict(phase='curve1000',execution_host='mimas',diagnostic_profile='native',pax1000_gate=str(Path(tmp)/'missing.json'))
+            plan=dict(phase='curve1000',execution_host='hpc',diagnostic_profile='native',workstation1000_gate=str(Path(tmp)/'missing.json'))
             with self.assertRaises(FileNotFoundError):diag.verify_predecessor(plan)
 
     def test_bad_scope_or_unbounded_wait_fails_before_evidence(self):

@@ -1,4 +1,4 @@
-"""Reverify accepted Pax/Mimas UMAP64 correspondence without fitting or NumPy."""
+"""Reverify accepted Workstation/HPC UMAP64 correspondence without fitting or NumPy."""
 import hashlib
 import json
 import math
@@ -41,17 +41,17 @@ def embedding_member(entry,locations,rows=64):
     return dict(sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
 
 
-def verify_pax1000_predecessor(plan):
+def verify_workstation1000_predecessor(plan):
     """A remote fit cannot start before the matching reference job closes."""
     import pilot_compare as geometry
-    path=Path(plan['pax1000_gate'])
+    path=Path(plan['workstation1000_gate'])
     if not path.is_absolute()or any(p.is_symlink()for p in [path,*path.parents])or path.stat().st_size>16*1024**2:
         raise ValueError('Exact bounded predecessor gate required')
     proof=json.loads(path.read_text())
-    if proof.get('operation')!='closed-pax1000-predecessor'or proof['plan']['sha256']!=plan['pax1000_plan_sha256']:
+    if proof.get('operation')!='closed-workstation1000-predecessor'or proof['plan']['sha256']!=plan['workstation1000_plan_sha256']:
         raise ValueError('Wrong reference predecessor plan')
     source=data(proof['plan']);loc=data(proof['locations']);done=data(proof['completion'],loc)
-    if (source['phase']!='curve1000'or source['execution_host']!='pax'or source['diagnostic_profile']!='native'
+    if (source['phase']!='curve1000'or source['execution_host']!='workstation'or source['diagnostic_profile']!='native'
             or done['status']!='diagnostic_pilot_complete'or done['plan_sha256']!=proof['plan']['sha256']
             or set(done['stage_receipts'])!={'umap1'}):raise ValueError('Reference1000 job is not closed')
     r=data(done['stage_receipts']['umap1'],loc);geometry._source_proof(r,source)
@@ -72,18 +72,18 @@ def verify_pax1000_predecessor(plan):
     exit=data(proof['pressure_exit'],loc)
     if exit.get('status')!='complete'or exit.get('returncode')!=0:raise ValueError('Reference pressure guard did not complete')
     embedding_member(r['projection'],loc,rows=1000)
-    return dict(status='closed_pax1000_predecessor_verified',projection_fits=0)
+    return dict(status='closed_workstation1000_predecessor_verified',projection_fits=0)
 
 
 def verify(proof_entry):
     import pilot_compare as geometry
     proof=data(proof_entry)
-    if proof.get('operation')!='closed-saved-umap64-correspondence' or set(proof['runs'])!={'pax','mimas'}:
+    if proof.get('operation')!='closed-saved-umap64-correspondence' or set(proof['runs'])!={'workstation','hpc'}:
         raise ValueError('Exact accepted correspondence proof required')
     recipe=data(proof['recipe']);runs={};identity=None
     for host,spec in proof['runs'].items():
         plan=data(spec['plan']);locations=data(spec['locations']);done=data(spec['completion'],locations)
-        if (plan['execution_host']!=host or plan['phase']!=('isolate64'if host=='pax'else'curve64')
+        if (plan['execution_host']!=host or plan['phase']!=('isolate64'if host=='workstation'else'curve64')
                 or plan['diagnostic_profile']!='native' or done['status']!='diagnostic_pilot_complete'
                 or done['plan_sha256']!=spec['plan']['sha256']):raise ValueError('Unclosed saved reference')
         r=data(done['stage_receipts']['umap1'],locations);geometry._source_proof(r,plan)
@@ -112,12 +112,12 @@ def verify(proof_entry):
             events[event['name']]={k:v for k,v in event.items()if k!='artifact'}
         scalars=events['umap1_optimizer_scalars']['values']
         if any(scalars[k]!=recipe[k]for k in ['a','b']):raise ValueError('Saved curve differs')
-        if host=='mimas':
+        if host=='hpc':
             if (t.get('curve_applications')!=1 or t['umap_curve']!=plan['curve_control']['recipe']
                     or any(t['umap_curve'][k]!=proof['recipe'][k]for k in ['bytes','sha256'])
-                    or events['umap_curve_effective']['values']!=recipe):raise ValueError('Mimas curve was not applied')
+                    or events['umap_curve_effective']['values']!=recipe):raise ValueError('HPC curve was not applied')
         runs[host]=dict(events=events,coordinates=embedding_member(r['projection'],locations))
-    left,right=runs['pax'],runs['mimas'];names=list(left['events'])
+    left,right=runs['workstation'],runs['hpc'];names=list(left['events'])
     required={'umap1_graph_data','umap1_graph_indices','umap1_graph_indptr','umap1_initial','umap1_rng',
               'umap1_optimizer_scalars','umap1_epoch0_scalars','umap1_epoch1_scalars','umap1_epoch1_after_head_embedding'}
     if (len(names)<35 or not required<=set(names)or not set(names)<=set(right['events'])
@@ -127,4 +127,4 @@ def verify(proof_entry):
         models=identity['models'],
         coordinates=left['coordinates'],model_order_sha256=hashlib.sha256('\n'.join(identity['models']).encode()).hexdigest(),
         feature_sha256=identity['feature_sha'],mask_sha256=identity['mask_sha'],recipe=proof['recipe'],
-        new_pax_controlled_fit_completed=False,reference_policy='Reuse accepted closed native Pax result; new Pax64 confirmation was refused before fitting')
+        new_workstation_controlled_fit_completed=False,reference_policy='Reuse accepted closed native Workstation result; new Workstation64 confirmation was refused before fitting')

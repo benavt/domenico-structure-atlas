@@ -39,9 +39,9 @@ def _modules():
     source = str(Path(__file__).absolute().parent)
     if source not in sys.path:
         sys.path.insert(0, source)
-    import mimas_cpu
-    import mimas_contract
-    return mimas_cpu, mimas_contract
+    import hpc_cpu
+    import hpc_contract
+    return hpc_cpu, hpc_contract
 
 
 def _regular(path):
@@ -375,8 +375,8 @@ def keeper(plan_path, binding_path, binding_sha):
         os.sched_setaffinity(0, binding['cpus'])
         _verify_caps(binding, plan, configure_oom=True)
         workload = _modules()[0].bound(plan['scoped_workload'])
-        env['MIMAS_SCOPE_BINDING'] = str(binding_path)
-        env['MIMAS_SCOPE_BINDING_SHA256'] = binding_sha
+        env['HPC_SCOPE_BINDING'] = str(binding_path)
+        env['HPC_SCOPE_BINDING_SHA256'] = binding_sha
         _save(path.parent / 'scope-ready.json', dict(plan_sha256=digest(path),
               binding_sha256=binding_sha, keeper_pid=os.getpid(), scope=binding['scope_cgroup'],
               memory_oom_group=1, scientific_fits=0))

@@ -77,7 +77,7 @@ def sanitized_environment(plan, *, environ=None):
     keep = {'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SLURM_CONF'}
     result = {k: v for k, v in original.items() if k in keep or k.startswith('SLURM_')}
     if plan.get('containment', {}).get('mode') == 'user_scope':
-        for key in ('MIMAS_SCOPE_BINDING', 'MIMAS_SCOPE_BINDING_SHA256'):
+        for key in ('HPC_SCOPE_BINDING', 'HPC_SCOPE_BINDING_SHA256'):
             if key in original:
                 result[key] = original[key]
     result.update(PATH=str(python.parent) + ':/usr/bin:/bin', PYTHONNOUSERSITE='1',
@@ -304,9 +304,9 @@ def _scope_binding(plan, env, process, proc_root, cgroup_root, sys_cpu_root, cpu
     """
     try:
         expected = _unlinked(_absolute(plan['plan_directory'])/'scope-binding.json')
-        _need(env.get('MIMAS_SCOPE_BINDING') == str(expected), 'Missing exact scope binding path')
+        _need(env.get('HPC_SCOPE_BINDING') == str(expected), 'Missing exact scope binding path')
         raw = expected.read_bytes();digest = hashlib.sha256(raw).hexdigest()
-        _need(env.get('MIMAS_SCOPE_BINDING_SHA256') == digest, 'Scope binding hash differs')
+        _need(env.get('HPC_SCOPE_BINDING_SHA256') == digest, 'Scope binding hash differs')
         binding = json.loads(raw)
         plan_path = expected.with_name('execution-plan.json')
         _need(binding['plan_sha256'] == hashlib.sha256(plan_path.read_bytes()).hexdigest(), 'Scope plan differs')
@@ -364,7 +364,7 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
     process = _unlinked(_absolute(proc_root) / str(pid))
     root = _unlinked(_absolute(cgroup_root)); locations = _locations(process, root)
     issues = []
-    local = plan.get('execution_host') == 'pax'
+    local = plan.get('execution_host') == 'workstation'
     scheduler = None
     job_id = env.get('SLURM_JOB_ID')
     _need(job_id is None or isinstance(job_id, str), 'Invalid Slurm job ID')
@@ -381,7 +381,7 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
                          verified=(_text(process/'cgroup')=='0::'+expected
                                    and plan['resources'].get('required_uid')==uid))
         if not scheduler['verified']:
-            issues.append('Matching owned Pax systemd service is unverified')
+            issues.append('Matching owned Workstation systemd service is unverified')
     elif not slurm_verified:
         issues.append('A matching single-node single-task Slurm CPU allocation is unverified')
     actual_python = str(_absolute(runtime_python or sys.executable))
@@ -441,7 +441,7 @@ def observe(plan, *, environ=None, proc_root='/proc', cgroup_root='/sys/fs/cgrou
         fit_issues.append('Finite effective PID containment/usage within the approved budget is unverified')
     if not sys.flags.no_user_site:
         fit_issues.append('Interpreter startup did not disable the user site')
-    return dict(schema_version=1, execution_host='pax' if local else 'mimas',scheduler=scheduler,
+    return dict(schema_version=1, execution_host='workstation' if local else 'hpc',scheduler=scheduler,
         status='blocked' if issues else 'smoke_observed',
         smoke_containment_verified=not issues, fit_containment_verified=not fit_issues,
         blocking_reasons=issues, fit_blocking_reasons=fit_issues,
@@ -467,7 +467,7 @@ def require_fit_ready(observation, *, require_actual_environment=True):
           and not observation.get('blocking_reasons') and not observation.get('fit_blocking_reasons'),
           'Scientific fits blocked: required Slurm/runtime/cgroup containment is unverified')
     _need(type(require_actual_environment) is bool, 'Explicit boolean environment evidence policy required')
-    local = observation.get('execution_host') == 'pax'
+    local = observation.get('execution_host') == 'workstation'
     for key in (('scheduler' if local else 'slurm'), 'runtime', 'memory', 'swap', 'pids', 'cpu', 'environment'):
         _need(observation.get(key, {}).get('verified') is True, 'Scientific fits blocked: unverified ' + key)
     if require_actual_environment:

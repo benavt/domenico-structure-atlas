@@ -6,8 +6,8 @@ import sys
 import tempfile
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-import mimas_cpu as cpu
-import mimas_contract as contract
+import hpc_cpu as cpu
+import hpc_contract as contract
 import reducer_diagnostic as diag
 
 
@@ -21,9 +21,9 @@ def fixture(root):
     trace=put('trace.json',dict(status='complete',counts=dict(umap=1,tsne=0),events=[dict(name='umap1_optimizer_scalars',artifact=scalar)]))
     receipt=put('receipt.json',dict(stage='umap1',phase_complete=True,diagnostic_profile='native',native_library_commit='a'*40,
         inputs=data,trace=trace,parameters=dict(n_neighbors=15,min_dist=.1,n_components=2,verbose=False,random_seed=42)))
-    source=put('source-plan.json',dict(execution_host='pax',phase='isolate64',diagnostic_profile='native'))
+    source=put('source-plan.json',dict(execution_host='workstation',phase='isolate64',diagnostic_profile='native'))
     closed=put('completion.json',dict(status='diagnostic_pilot_complete',plan_sha256=source['sha256'],stage_receipts=dict(umap1=receipt)))
-    spec=dict(policy='public-umap-a-b-from-closed-pax-trace',recipe=put('recipe.json',recipe),source_scalars=scalar,
+    spec=dict(policy='public-umap-a-b-from-closed-workstation-trace',recipe=put('recipe.json',recipe),source_scalars=scalar,
         source_trace=trace,source_receipt=receipt,source_plan=source,source_completion=closed)
     return dict(phase='curve64',stages=['umap1'],diagnostic_profile='native',curve_control=spec,
         native=dict(library_commit='a'*40),trace_sources={'layouts':{}},inputs=data,
@@ -56,11 +56,11 @@ class CurveContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory()as tmp:
             root=Path(tmp);p=fixture(root);source=Path(cpu.__file__).absolute().parent
             stub=root/'stub.json';stub.write_text('{}');entry=cpu.record(stub)
-            p.update(operation='mimas-cpu-validation',maximum_projection_fits=1,maximum_hdbscan_extractions=0,
+            p.update(operation='hpc-cpu-validation',maximum_projection_fits=1,maximum_hdbscan_extractions=0,
                 create_environment=False,run_root=str(root/'run'),runtime_python='/runtime/bin/python',runtime_prefix='/runtime',
                 portability_helper=entry,runtime_payload=entry,dependency_sources=[],
                 trace_sources={k:entry for k in ['umap','sklearn','layouts']})
-            p['frozen_files'] += [entry]+[cpu.record(source/name)for name in ['mimas_cpu.py','mimas_contract.py','mimas_smoke.py','mimas_pilot.py','reducer_diagnostic.py']]
+            p['frozen_files'] += [entry]+[cpu.record(source/name)for name in ['hpc_cpu.py','hpc_contract.py','hpc_smoke.py','hpc_pilot.py','reducer_diagnostic.py']]
             path=root/'plan.json';path.write_text(json.dumps(p))
             for action in ['preflight','run']:
                 r=subprocess.run([sys.executable,'-I','-B',cpu.__file__,action,str(path)],capture_output=True,text=True,timeout=10)
