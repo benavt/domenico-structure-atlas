@@ -145,7 +145,7 @@ def prior(plan, stage, data, check):
     import numpy as np
     entry = plan.get('phase_outputs',{}).get(stage);need(entry,'Closed '+stage+' pilot receipt required')
     result = read(entry,check)
-    need(result['stage']==stage and result['status']=='diagnostic_not_full_clustering' and result['phase_complete'] is True
+    need(result['stage']==stage and (result['status']=='diagnostic_not_full_clustering'or plan.get('phase')=='serca-full'and result['status']=='verified_saved_projection_reuse') and result['phase_complete'] is True
          and result['input_fingerprint']==data['fingerprint'] and result['models']==data['names']
          and result['local_paths']==data['paths'], 'Prior phase cohort/protocol identity differs')
     for artifact in result['outputs']:bound(artifact,check)
@@ -270,5 +270,8 @@ def run_stage(plan, stage, output, check=lambda: None, adapters=None):
         full_clustering_complete=False,coordinate_parses=0,scoring_calls=0,molecular_exports=0,
         input_integrity=dict(file_sha256_verified_before_map=True,raw_float16_sha256_verified=True,
                              readonly_mapping=True,identities_unchanged_after_phase=True),outputs=artifacts,**special)
+    if plan.get('phase')=='serca-full'and stage=='labels':
+        receipt['primary_curve']=record(output/'primary-curve.json',check)
+        receipt['outputs'].append(receipt['primary_curve'])
     save(output/'receipt.json',receipt)
     return receipt
