@@ -11,7 +11,47 @@ ISOLATION_STAGES = ('umap1', 'tsne1')
 
 
 def stages(plan):
+    if plan.get('phase') == 'curve64': return ('umap1',)
     return ISOLATION_STAGES if plan.get('phase') == 'isolate64' else STAGES
+
+
+def verify_curve_plan(plan):
+    """Read-only provenance check for a recipe-bound pair of public UMAP scalars."""
+    cpu, _, _ = modules(); spec = plan['curve_control']
+    if (plan.get('diagnostic_profile') != 'native' or plan.get('stages') != ['umap1']
+            or spec.get('policy') != 'public-umap-a-b-from-closed-pax-trace'
+            or 'layouts' not in plan['trace_sources']):
+        raise ValueError('Exact matched-curve native UMAP scope required')
+    for key in ('recipe', 'source_plan', 'source_completion', 'source_receipt', 'source_trace', 'source_scalars'):
+        entry = spec[key]
+        if entry not in plan['frozen_files'] or entry['bytes'] > 1024**2:
+            raise ValueError('Bounded frozen curve provenance required')
+        cpu.bound(entry)
+    read = lambda key: json.loads(cpu.bound(spec[key]).read_text())
+    recipe = read('recipe'); source = read('source_plan'); completion = read('source_completion')
+    receipt = read('source_receipt'); trace = read('source_trace'); scalar = read('source_scalars')
+    if (set(recipe) != {'a', 'b', 'spread', 'min_dist'}
+            or source.get('execution_host') != 'pax' or source.get('phase') != 'isolate64'
+            or source.get('diagnostic_profile') != 'native'
+            or completion.get('status') != 'diagnostic_pilot_complete'
+            or completion.get('plan_sha256') != spec['source_plan']['sha256']
+            or completion['stage_receipts']['umap1']['sha256'] != spec['source_receipt']['sha256']
+            or receipt.get('stage') != 'umap1' or not receipt.get('phase_complete')
+            or receipt.get('diagnostic_profile') != 'native'
+            or receipt.get('native_library_commit') != plan['native']['library_commit']
+            or receipt['trace']['sha256'] != spec['source_trace']['sha256']
+            or trace.get('status') != 'complete' or trace.get('counts') != dict(umap=1, tsne=0)
+            or not any(e['name'] == 'umap1_optimizer_scalars'
+                       and e['artifact']['sha256'] == spec['source_scalars']['sha256'] for e in trace['events'])
+            or recipe['a'] != scalar['a'] or recipe['b'] != scalar['b']
+            or recipe['min_dist'] != .1 or recipe['spread'] != 1.
+            or receipt.get('parameters') != dict(n_neighbors=15,min_dist=.1,n_components=2,verbose=False,random_seed=42)
+            or any(receipt['inputs'][k] != plan['inputs'][k] for k in
+                   ('model_count','construct_residues','retained_reference_positions','feature_sha256','model_order_sha256','pair_mask_sha256'))):
+        raise ValueError('Curve recipe is not the closed native Pax recipe for this cohort')
+    import math
+    if not all(type(v) is float and math.isfinite(v) for v in recipe.values()) or recipe['a'] <= 0 or recipe['b'] <= 0:
+        raise ValueError('Finite positive curve parameters required')
 
 
 def verify_isolation_plan(plan):
@@ -237,12 +277,16 @@ def run_stage(plan, stage, output):
     versions = dict(umap=umap.__version__,sklearn=sklearn.__version__)
     trace_modules = [('umap',umap_module),('sklearn',tsne_module)]
     options = {}; install_options = {}
-    if plan.get('phase') == 'isolate64':
-        verify_isolation_plan(plan)
+    if plan.get('phase') in ('isolate64', 'curve64'):
         import umap.layouts as layout_module
         trace_modules.append(('layouts',layout_module))
-        options = dict(optimizer_epoch=True,
-                       tsne_initialization=plan['isolation']['tsne_initialization'] if method == 'tsne' else None)
+        if plan['phase'] == 'curve64':
+            verify_curve_plan(plan)
+            options = dict(optimizer_epoch=True, umap_curve=plan['curve_control']['recipe'])
+        else:
+            verify_isolation_plan(plan)
+            options = dict(optimizer_epoch=True,
+                           tsne_initialization=plan['isolation']['tsne_initialization'] if method == 'tsne' else None)
         install_options = dict(layout_module=layout_module)
     for name, module in trace_modules:
         if cpu.record(module.__file__) != plan['trace_sources'][name]:
@@ -274,6 +318,8 @@ def run_stage(plan, stage, output):
         native_receipt=cpu.record(native_output/'receipt.json'))
     if plan.get('phase') == 'isolate64':
         result['isolation'] = plan['isolation']
+    if plan.get('phase') == 'curve64':
+        result['curve_control'] = plan['curve_control']
     result['outputs'] = result['outputs'] + [result['native_receipt'],result['runtime_effective'],
         result['runtime_effective_after'],result['trace']] + [event['artifact'] for event in traced['events'] if 'artifact' in event]
     validate_receipt(plan,stage,result)
@@ -314,4 +360,16 @@ def validate_receipt(plan, stage, result):
                 or traced.get('initialization_replays') != int(method == 'tsne')
                 or not expected_events <= names):
             raise ValueError('Missing extended epoch trace or shared initialization proof')
+    if plan.get('phase') == 'curve64':
+        names = {e['name'] for e in traced['events']}
+        recipe = json.loads(cpu.bound(plan['curve_control']['recipe']).read_text())
+        effective = [e for e in traced['events'] if e['name'] == 'umap_curve_effective']
+        if (result.get('curve_control') != plan['curve_control'] or method != 'umap'
+                or traced.get('umap_curve') != plan['curve_control']['recipe']
+                or traced.get('curve_applications') != 1 or traced.get('optimizer_epoch_trace') is not True
+                or traced.get('epoch_calls', 0) < 2 or traced.get('initialization_replays') != 0
+                or len(effective) != 1 or effective[0].get('values') != recipe
+                or not {'umap_curve_requested','umap1_optimizer_scalars','umap1_epoch0_scalars',
+                        'umap1_epoch1_scalars','umap1_epoch1_after_head_embedding'} <= names):
+            raise ValueError('Missing public curve control or extended optimizer proof')
     return result
