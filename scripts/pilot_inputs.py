@@ -82,6 +82,8 @@ def save(path,value):
 
 def prepare(spec,output):
     output=Path(output).absolute();need(not output.exists()and not any(p.is_symlink()for p in [output,*output.parents]),'Fresh pilot input destination required')
+    storage=spec.get('model_storage','copies')
+    need(storage in ('copies','existing_originals'),'Explicit supported model storage required')
     intake=read(spec['intake']);native=read(spec['native_models']);proof=read(spec['feature_proof']);terminal=read(spec['terminal_report'])
     rows=intake['models'];ids=[r['model_id']for r in rows];order=hashlib.sha256('\n'.join(ids).encode()).hexdigest()
     need(len(set(ids))==len(ids)==spec['source_models']and order==proof['models_sha256'],'Accepted model order differs')
@@ -107,7 +109,15 @@ def prepare(spec,output):
             need(local[:4]==b'PK\x03\x04','ZIP local header differs')
             flags,compression=struct.unpack('<HH',local[6:10]);need(not flags&1 and compression==0,'Unsupported stored ZIP member')
             name_bytes,extra_bytes=struct.unpack('<HH',local[26:30]);start=info.header_offset+30+name_bytes+extra_bytes+header_bytes
-            output.mkdir(parents=True);(output/'models').mkdir();digest=hashlib.sha256()
+            reserve=spec.get('minimum_free_disk_bytes',0)
+            need(type(reserve)is int and reserve>=0,'Nonnegative disk reserve required')
+            ancestor=next(p for p in [output,*output.parents]if p.exists())
+            estimate=len(indices)*dimensions*2+16*1024**2
+            if storage=='copies':estimate+=sum(Path(row['path']).stat().st_size for row in chosen)
+            need(shutil.disk_usage(ancestor).free>=reserve+estimate,'Input preparation would breach the disk reserve')
+            output.mkdir(parents=True)
+            if storage=='copies':(output/'models').mkdir()
+            digest=hashlib.sha256()
             with(output/'features.npy').open('xb')as dest:
                 dest.write(make_header((len(indices),dimensions)))
                 for i in indices:
@@ -117,8 +127,10 @@ def prepare(spec,output):
     for row in chosen:
         name=row['model_id'];need(re.fullmatch('[A-Za-z0-9_.-]+',name)and name not in('.','..'),'Unsafe analysis ID')
         source=Path(row['path']);need(record(source)['sha256']==row['sha256'],'Original coordinate hash differs')
-        destination=output/'models'/(name+source.suffix);shutil.copyfile(source,destination)
-        need(sha(destination)==row['sha256'],'Selected coordinate copy differs')
+        destination=source
+        if storage=='copies':
+            destination=output/'models'/(name+source.suffix);shutil.copyfile(source,destination)
+            need(sha(destination)==row['sha256'],'Selected coordinate copy differs')
         metadata=expected[name];members.append(dict(model=name,local_path=str(destination),original_sha256=row['sha256'],
             flags=dict(method=row['method'],native_physicality=metadata['native_physicality'],energy_t010=metadata['energy_t010'],energy_is_confidence=False)))
         scores.append(metadata)
@@ -126,6 +138,7 @@ def prepare(spec,output):
     need(identity(cache)==before,'Source cache changed during preparation')
     files=[record(p)for p in sorted(output.rglob('*'))if p.is_file()]
     result=dict(status='prepared_no_science',target=spec['target'],source_models=len(ids),model_count=len(indices),
+        model_storage=storage,
         selection=dict(rule='one seeded rejected control when available; seeded method-round-robin, source row order',seed=spec['selection_seed'],source_indices=indices,
                        method_counts=dict(Counter(r['method']for r in chosen)),physicality_counts=dict(Counter(expected[r['model_id']]['native_physicality']for r in chosen))),
         shape=[len(indices),dimensions],dtype='float16',raw_feature_sha256=digest.hexdigest(),

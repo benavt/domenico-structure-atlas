@@ -10,10 +10,46 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import time
 
 
 GUARD_COMMIT = 'b561753af4a06166ea38e9eb9332f3b0a808c3b0'
 GUARD_SHA256 = 'be60bd2a2a3fec27635e8449b283176e9dca7f8f3aeebf9f4117a509422bef44'
+
+
+def wait_for_quiet(plan, guard, admission, *, clock=time.monotonic, sleep=time.sleep):
+    """Wait before the first workload launch; never retry a started/refused fit."""
+    spec = plan.get('admission_wait')
+    if spec is None: return True
+    need(plan['phase'] == 'curve1000' and set(spec) == {'directory','maximum_seconds','sample_seconds','quiet_samples'},
+         'Only the frozen larger-pilot admission wait is supported')
+    need(type(spec['maximum_seconds']) is int and 1 <= spec['maximum_seconds'] <= 1800
+         and type(spec['sample_seconds']) is int and 1 <= spec['sample_seconds'] <= 60
+         and type(spec['quiet_samples']) is int and 2 <= spec['quiet_samples'] <= 12
+         and spec['sample_seconds'] * spec['quiet_samples'] <= spec['maximum_seconds'],
+         'Finite admission-wait bounds required')
+    cpu, _ = _modules(); root = _path(spec['directory'])
+    for other in (plan['run_root'],plan['guard_output'],plan['runtime_prefix']):
+        other = _path(other)
+        need(not root.is_relative_to(other) and not other.is_relative_to(root), 'Separate wait evidence required')
+    need(root.parent == _path(plan['guard_output']).parent, 'Wait and guard evidence must share the owned control parent')
+    need(not root.exists(), 'Fresh wait evidence required; no retry')
+    root.mkdir(parents=False); start = clock(); quiet = 0; previous = guard.linux_snapshot()
+    with (root/'samples.jsonl').open('x') as stream:
+        while clock() - start < spec['maximum_seconds']:
+            remaining = spec['maximum_seconds']-(clock()-start)
+            if remaining <= 0: break
+            sleep(min(spec['sample_seconds'],remaining))
+            current = guard.linux_snapshot(); reasons = guard.violations(current,previous,admission)
+            quiet = quiet + 1 if not reasons else 0
+            import json
+            stream.write(json.dumps(dict(host=current,reasons=reasons,consecutive_quiet=quiet,projection_fits=0))+'\n');stream.flush()
+            previous = current
+            if quiet >= spec['quiet_samples']:
+                cpu.save(root/'result.json',dict(status='quiet_before_first_launch',elapsed_seconds=clock()-start,projection_fits=0))
+                return True
+    cpu.save(root/'result.json',dict(status='admission_wait_timeout_no_launch',elapsed_seconds=clock()-start,projection_fits=0))
+    return False
 
 
 def need(value, message):
@@ -85,8 +121,8 @@ def _child_environment(plan, contract):
 def run(plan_path):
     cpu, contract = _modules()
     plan = cpu.verify(plan_path)
-    need(plan.get('execution_host') == 'pax' and plan.get('phase') in ('smoke', 'pilot64', 'repro64', 'isolate64', 'curve64'),
-         'Only the approved Pax setup or paired 64-model pilot is supported')
+    need(plan.get('execution_host') == 'pax' and plan.get('phase') in ('smoke', 'pilot64', 'repro64', 'isolate64', 'curve64','curve1000'),
+         'Only the approved Pax setup or paired reducer pilot is supported')
     need(not plan.get('containment'), 'Pax containment belongs to its systemd unit, not a Slurm scope')
     bootstrap = plan['bootstrap']
     cpu.bound(bootstrap['binary'])
@@ -128,11 +164,16 @@ def run(plan_path):
     admission = guard.ResourceLimits(**policy['admission'])
     runtime_limits = guard.ResourceLimits(**policy['runtime'])
     cpu.check_disk(plan)
+    if not wait_for_quiet(plan,guard,admission): return 75
+    cpu.check_disk(plan)
+    workload_wall = plan.get('workload_wall_seconds',plan['resources']['maximum_wall_seconds'])
+    need(type(workload_wall) is int and 1 <= workload_wall <= plan['resources']['maximum_wall_seconds'],
+         'Bounded workload wall time required')
     with _child_environment(plan, contract):
         code = guard.run_guarded(['/bin/bash', str(workload)], output,
             admission=admission, runtime=runtime_limits,
             interval_seconds=policy['interval_seconds'],
-            maximum_wall_seconds=plan['resources']['maximum_wall_seconds'],
+            maximum_wall_seconds=workload_wall,
             consecutive_failures=policy['consecutive_failures'])
     need(type(code) is int, 'Pressure guard did not return an actual child exit code')
     cpu.save(output / 'launcher.json', dict(schema_version=1, execution_host='pax',
