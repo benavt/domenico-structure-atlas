@@ -11,7 +11,7 @@ ISOLATION_STAGES = ('umap1', 'tsne1')
 
 
 def stages(plan):
-    if plan.get('phase') == 'curve64': return ('umap1',)
+    if plan.get('phase') in ('curve64','curve1000'): return ('umap1',)
     return ISOLATION_STAGES if plan.get('phase') == 'isolate64' else STAGES
 
 
@@ -47,8 +47,24 @@ def verify_curve_plan(plan):
             or recipe['min_dist'] != .1 or recipe['spread'] != 1.
             or receipt.get('parameters') != dict(n_neighbors=15,min_dist=.1,n_components=2,verbose=False,random_seed=42)
             or any(receipt['inputs'][k] != plan['inputs'][k] for k in
-                   ('model_count','construct_residues','retained_reference_positions','feature_sha256','model_order_sha256','pair_mask_sha256'))):
+                   (('construct_residues','retained_reference_positions','pair_mask_sha256') if plan['phase']=='curve1000' else
+                    ('model_count','construct_residues','retained_reference_positions','feature_sha256','model_order_sha256','pair_mask_sha256')))):
         raise ValueError('Curve recipe is not the closed native Pax recipe for this cohort')
+    if plan['phase']=='curve1000':
+        import saved_curve_evidence
+        entry=plan['correspondence64']
+        if entry not in plan['frozen_files']:raise ValueError('Saved64 gate is not frozen')
+        result=saved_curve_evidence.verify(entry)
+        if result['mask_sha256']!=plan['inputs']['pair_mask_sha256']:raise ValueError('Larger cohort mask differs')
+        if any(result['recipe'][k]!=spec['recipe'][k]for k in ('bytes','sha256')):
+            raise ValueError('Larger-cohort curve differs from accepted saved correspondence')
+        member_entry=plan['inputs']['members']
+        if member_entry not in plan['frozen_files']:raise ValueError('Larger-cohort members are not frozen')
+        members=json.loads(cpu.bound(member_entry).read_text())['members'];ids=[r['model']for r in members]
+        import hashlib
+        if (len(ids)!=1000 or len(set(ids))!=1000 or not set(result['models'])<=set(ids)
+                or hashlib.sha256('\n'.join(ids).encode()).hexdigest()!=plan['inputs']['model_order_sha256']):
+            raise ValueError('Larger cohort must retain the matched64 models in frozen order')
     import math
     if not all(type(v) is float and math.isfinite(v) for v in recipe.values()) or recipe['a'] <= 0 or recipe['b'] <= 0:
         raise ValueError('Finite positive curve parameters required')
@@ -174,6 +190,10 @@ def verify_runtime_payload(plan, root):
 
 def verify_predecessor(plan):
     """Generic trials require this host's fully closed, verified native trials."""
+    if plan.get('phase')=='curve1000' and plan.get('execution_host')=='mimas':
+        import saved_curve_evidence
+        saved_curve_evidence.verify_pax1000_predecessor(plan)
+        return
     if plan['diagnostic_profile'] == 'native':
         return
     gate = json.loads(Path(plan['native_pair_gate']).read_text())
@@ -277,10 +297,10 @@ def run_stage(plan, stage, output):
     versions = dict(umap=umap.__version__,sklearn=sklearn.__version__)
     trace_modules = [('umap',umap_module),('sklearn',tsne_module)]
     options = {}; install_options = {}
-    if plan.get('phase') in ('isolate64', 'curve64'):
+    if plan.get('phase') in ('isolate64', 'curve64','curve1000'):
         import umap.layouts as layout_module
         trace_modules.append(('layouts',layout_module))
-        if plan['phase'] == 'curve64':
+        if plan['phase'] in ('curve64','curve1000'):
             verify_curve_plan(plan)
             options = dict(optimizer_epoch=True, umap_curve=plan['curve_control']['recipe'])
         else:
@@ -318,7 +338,7 @@ def run_stage(plan, stage, output):
         native_receipt=cpu.record(native_output/'receipt.json'))
     if plan.get('phase') == 'isolate64':
         result['isolation'] = plan['isolation']
-    if plan.get('phase') == 'curve64':
+    if plan.get('phase') in ('curve64','curve1000'):
         result['curve_control'] = plan['curve_control']
     result['outputs'] = result['outputs'] + [result['native_receipt'],result['runtime_effective'],
         result['runtime_effective_after'],result['trace']] + [event['artifact'] for event in traced['events'] if 'artifact' in event]
@@ -360,7 +380,7 @@ def validate_receipt(plan, stage, result):
                 or traced.get('initialization_replays') != int(method == 'tsne')
                 or not expected_events <= names):
             raise ValueError('Missing extended epoch trace or shared initialization proof')
-    if plan.get('phase') == 'curve64':
+    if plan.get('phase') in ('curve64','curve1000'):
         names = {e['name'] for e in traced['events']}
         recipe = json.loads(cpu.bound(plan['curve_control']['recipe']).read_text())
         effective = [e for e in traced['events'] if e['name'] == 'umap_curve_effective']

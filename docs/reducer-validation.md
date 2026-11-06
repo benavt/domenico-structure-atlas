@@ -80,3 +80,31 @@ The next paired case should freeze a deterministic, method-stratified 1,000-mode
 cohort using the same accepted terminal mask. Full-cohort work needs its own
 resource and scientific acceptance plan; at least one case must exercise the
 approximate-neighbor path used by the actual full workload.
+
+## Larger paired UMAP case: `curve1000`
+
+This separately approved phase keeps the exact matched curve recipe and terminal
+mask while binding 1,000 selected stored feature rows and their existing original
+coordinate paths. No duplicate model copies, new distances or scoring are needed.
+One UMAP per host remains the entire fit budget. The input order, rejection flags
+and nested 64-model membership must verify before execution.
+
+`saved_curve_evidence.py` rechecks the closed accepted reference-host UMAP64 and
+the matched-curve destination result: input identity, native source proofs, every
+output hash, finite saved coordinates and all 35 shared checkpoints must agree.
+It explicitly records that a new controlled reference-host confirmation was not
+run. This is completed-artifact reuse, not a fabricated completion of that launch.
+The larger source/approval scope must name this reference policy deliberately.
+
+The reference host may have an explicit bounded wait before its first workload
+launch. Consecutive quiet samples use the same frozen admission thresholds; the
+unchanged guard checks them again before starting the child. The wait never
+changes a host setting, restarts a refused/started fit, or extends the unit's hard
+deadline. Timeout creates a no-launch receipt. Omit the option to retain the
+existing immediate-refusal behavior. The destination trial follows only after a
+closed reference-host result, avoiding unused destination fits on a busy host.
+
+`umap1000_compare.py` verifies two closed 1,000-point trials and their saved64
+gate, then requires exact coordinate bytes and effective checkpoints. No
+full-cohort execution or cluster-stability claim follows automatically. The
+large-workload approximate-neighbor path remains a separate gate.
