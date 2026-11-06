@@ -189,6 +189,11 @@ approval. Model selection, molecular reports and publication remain later stages
 Production admission requires at least 128 GiB of currently available node RAM.
 During each child, a 32 GiB host reserve and the actual job-memory PSI interval
 are checked every five seconds; three consecutive violations stop this job.
-The memory-full threshold is 0.5% per measured interval, without using a decaying
-PSI average as an interval counter. I/O counters remain explicitly unavailable
+The memory-full threshold, when exposed, is 0.5% per measured interval, without
+using a decaying average as an interval counter. Mimas currently exposes no PSI
+files. Missing PSI is recorded as unavailable; the monitor still enforces the
+host reserve and stops after three samples above 60 GiB of actual job memory,
+below the unchanged 64 GiB hard cap. It does not set a reclaim-triggering kernel
+memory-high limit or change host controls. A previously readable PSI counter
+that disappears remains an error. I/O counters remain explicitly unavailable
 when the kernel does not expose them; this is never reported as zero I/O.

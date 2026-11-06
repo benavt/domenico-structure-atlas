@@ -37,7 +37,7 @@ class MemoryGuard:
     def __init__(self,plan,root):
         self.plan=plan;self.root=Path(root);self.previous=None;self.failures=0
         need(plan['production_pressure']==dict(admission_available_bytes=128*1024**3,runtime_available_bytes=32*1024**3,
-             maximum_job_memory_full_percent=.5,consecutive_failures=3),'Exact reviewed production pressure policy required')
+             maximum_job_memory_full_percent=.5,maximum_job_memory_current_bytes=60*1024**3,consecutive_failures=3),'Exact reviewed production pressure policy required')
     @staticmethod
     def available():
         values={row.split(':',1)[0]:int(row.split()[1])*1024 for row in Path('/proc/meminfo').read_text().splitlines()if row.startswith('MemAvailable:')}
@@ -46,19 +46,25 @@ class MemoryGuard:
     def full_total(observation):
         path=Path(observation['memory']['records'][0]['path']).parent/'memory.pressure'
         need(path.is_relative_to('/sys/fs/cgroup'),'Actual memory-controller PSI path required')
-        full=next(row for row in path.read_text().splitlines()if row.startswith('full '))
+        try:raw=path.read_text()
+        except FileNotFoundError:return None
+        full=next(row for row in raw.splitlines()if row.startswith('full '))
         return int(dict(item.split('=',1)for item in full.split()[1:])['total'])
     def admit(self):
         need(self.available()>=self.plan['production_pressure']['admission_available_bytes'],'Mimas host memory below full-job admission reserve; no fit')
     def sample(self,observation,now):
         total=self.full_total(observation);available=self.available();fraction=None
+        current=observation['memory']['current_bytes'];need(type(current)is int and current>=0,'Actual job-memory current required')
         if self.previous is not None:
-            elapsed=now-self.previous[0]
-            need(elapsed>0 and total>=self.previous[1],'Actual monotonic memory-pressure counters required')
-            fraction=100*(total-self.previous[1])/(elapsed*1000000)
-        bad=available<self.plan['production_pressure']['runtime_available_bytes']or fraction is not None and fraction>.5
+            elapsed=now-self.previous[0];need(elapsed>0,'Actual monotonic sampling interval required')
+            if self.previous[1]is not None:
+                need(total is not None and total>=self.previous[1],'Previously available job PSI disappeared or decreased')
+                fraction=100*(total-self.previous[1])/(elapsed*1000000)
+        bad=(available<self.plan['production_pressure']['runtime_available_bytes']
+             or current>self.plan['production_pressure']['maximum_job_memory_current_bytes']
+             or fraction is not None and fraction>.5)
         self.failures=self.failures+1 if bad else 0;self.previous=(now,total)
-        with(self.root/'memory-pressure.jsonl').open('a')as f:f.write(json.dumps(dict(monotonic=now,job_memory_full_interval_percent=fraction,host_available_bytes=available,consecutive_failures=self.failures))+'\n')
+        with(self.root/'memory-pressure.jsonl').open('a')as f:f.write(json.dumps(dict(monotonic=now,job_memory_full_interval_percent=fraction,job_psi_available=total is not None,job_memory_current_bytes=current,host_available_bytes=available,consecutive_failures=self.failures))+'\n')
         need(self.failures<3,'Sustained job memory pressure or exhausted host reserve; stop this job only')
 
 

@@ -115,7 +115,7 @@ class ProductionGuardTests(unittest.TestCase):
 
 class MemoryGuardTests(unittest.TestCase):
     def fixture(self,root):
-        policy=dict(admission_available_bytes=128*1024**3,runtime_available_bytes=32*1024**3,maximum_job_memory_full_percent=.5,consecutive_failures=3)
+        policy=dict(admission_available_bytes=128*1024**3,runtime_available_bytes=32*1024**3,maximum_job_memory_full_percent=.5,maximum_job_memory_current_bytes=60*1024**3,consecutive_failures=3)
         return subject.MemoryGuard(dict(production_pressure=policy),root)
     def test_admission_and_actual_interval_pressure_stop_only_after_three_samples(self):
         with tempfile.TemporaryDirectory()as tmp:
@@ -123,15 +123,31 @@ class MemoryGuardTests(unittest.TestCase):
             with patch.object(guard,'available',return_value=127*1024**3):
                 with self.assertRaisesRegex(ValueError,'no fit'):guard.admit()
             with patch.object(guard,'available',return_value=256*1024**3),patch.object(guard,'full_total',side_effect=[0,50000,100000,150000]):
-                guard.admit();guard.sample({},0);guard.sample({},5);guard.sample({},10)
-                with self.assertRaisesRegex(ValueError,'this job only'):guard.sample({},15)
+                guard.admit();guard.sample({'memory':{'current_bytes':4*1024**3}},0);guard.sample({'memory':{'current_bytes':4*1024**3}},5);guard.sample({'memory':{'current_bytes':4*1024**3}},10)
+                with self.assertRaisesRegex(ValueError,'this job only'):guard.sample({'memory':{'current_bytes':4*1024**3}},15)
             self.assertEqual(guard.failures,3)
     def test_old_pressure_average_is_irrelevant_when_interval_counter_clears(self):
         with tempfile.TemporaryDirectory()as tmp:
             guard=self.fixture(Path(tmp))
             with patch.object(guard,'available',return_value=256*1024**3),patch.object(guard,'full_total',side_effect=[0,50000,50000,50000]):
-                for now in(0,5,10,15):guard.sample({},now)
+                for now in(0,5,10,15):guard.sample({'memory':{'current_bytes':4*1024**3}},now)
             self.assertEqual(guard.failures,0)
+
+    def test_missing_psi_is_explicit_and_current_memory_still_stops_the_job(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp);guard=self.fixture(root);observation={'memory':{'current_bytes':61*1024**3}}
+            with patch.object(guard,'available',return_value=256*1024**3),patch.object(guard,'full_total',return_value=None):
+                guard.sample(observation,0);guard.sample(observation,5)
+                with self.assertRaisesRegex(ValueError,'this job only'):guard.sample(observation,10)
+            rows=[json.loads(x)for x in(root/'memory-pressure.jsonl').read_text().splitlines()]
+            self.assertTrue(all(r['job_memory_full_interval_percent']is None and r['job_psi_available']is False for r in rows))
+            self.assertEqual(guard.failures,3)
+    def test_a_known_psi_counter_cannot_silently_disappear(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            guard=self.fixture(Path(tmp));observation={'memory':{'current_bytes':4*1024**3}}
+            with patch.object(guard,'available',return_value=256*1024**3),patch.object(guard,'full_total',side_effect=[0,None]):
+                guard.sample(observation,0)
+                with self.assertRaisesRegex(ValueError,'PSI disappeared'):guard.sample(observation,5)
 
 
 if __name__=='__main__':unittest.main()
