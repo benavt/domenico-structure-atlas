@@ -61,3 +61,22 @@ submitting work, importing estimators or creating a run. It is distinct from
 `verify`, `run`, `child`, `setup-check` and `smoke`, which retain exact approval
 checks. Source tests launch this real `-I` entry point so the test runner's own
 module path cannot hide bootstrap import errors.
+
+## Matched UMAP curve: `curve64`
+
+One UMAP per host, two fits total, holds the public `a`/`b` constructor parameters
+constant alongside their `spread`/`min_dist` recipe. The pair comes from a closed
+reference-host trace; its source plan, completion, stage receipt, trace and scalar
+artifact must all verify before any run. It is an explicit diagnostic intervention.
+The existing numerical wheel, graph/init/seed/precision and resource guards remain.
+
+The closed-only `umap_curve_compare.py` requires matching array shape, dtype and
+coordinate bytes, matching recorded checkpoints, and bitwise preservation of the
+reference host's original native coordinates. Approximate geometric agreement is
+reported but cannot pass this gate. No cache bypass or additional fit is allowed.
+Passing this test is evidence for that cohort; it does not authorize or certify
+larger cohorts, clustering labels, a changed residue selection or full analysis.
+The next paired case should freeze a deterministic, method-stratified 1,000-model
+cohort using the same accepted terminal mask. Full-cohort work needs its own
+resource and scientific acceptance plan; at least one case must exercise the
+approximate-neighbor path used by the actual full workload.
