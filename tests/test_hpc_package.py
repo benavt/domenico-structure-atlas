@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
-import mimas_package as package
+import hpc_package as package
 
 
 class PackageTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class PackageTests(unittest.TestCase):
     def test_batch_is_bounded_offline_and_approval_first(self):
         plan = {'run_root': '/run/new', 'runtime_prefix': '/runtime/new',
                 'runtime_python': '/runtime/new/bin/python', 'wheelhouse': '/payload/wheels',
-                'requirements': '/payload/requirements.txt', 'runner': '/source/mimas_cpu.py',
+                'requirements': '/payload/requirements.txt', 'runner': '/source/hpc_cpu.py',
                 'partition': 'debug', 'resources': {'maximum_cpus': 1,
                 'maximum_memory_bytes': 4*1024**3, 'maximum_wall_seconds': 900}}
         body = package.smoke_batch('/payload/plan.json', plan, '/base/bin/python')
@@ -50,7 +50,7 @@ class PackageTests(unittest.TestCase):
         self.assertIn('--require-hashes', body)
         self.assertNotIn('sbatch ', body)
         self.assertNotIn('--gres', body)
-        self.assertLess(body.index('mimas_cpu.py verify'), body.index('-m venv'))
+        self.assertLess(body.index('hpc_cpu.py verify'), body.index('-m venv'))
         self.assertLess(body.index('test ! -e'), body.index('-m venv'))
         with tempfile.NamedTemporaryFile('w', suffix='.sh') as f:
             f.write(body);f.flush()
@@ -61,22 +61,22 @@ class PackageTests(unittest.TestCase):
 
     def test_scoped_batch_enters_scope_before_any_environment_creation(self):
         plan = {'run_root':'/run/new','runtime_prefix':'/runtime/new','runtime_python':'/runtime/new/bin/python',
-                'wheelhouse':'/payload/wheels','requirements':'/payload/requirements.txt','runner':'/source/mimas_cpu.py',
+                'wheelhouse':'/payload/wheels','requirements':'/payload/requirements.txt','runner':'/source/hpc_cpu.py',
                 'partition':'debug','resources':{'maximum_cpus':1,'maximum_memory_bytes':8*1024**3,'maximum_wall_seconds':3600},
                 'containment':{'mode':'user_scope'}}
         body=package.smoke_batch('/payload/plan.json',plan,'/base/bin/python')
-        self.assertIn('mimas_scope.py launch',body);self.assertIn('#SBATCH --no-requeue',body)
+        self.assertIn('hpc_scope.py launch',body);self.assertIn('#SBATCH --no-requeue',body)
         self.assertNotIn('pip install',body);self.assertNotIn('-m venv',body)
         plain=dict(plan);plain.pop('containment')
         inner=package.smoke_batch('/payload/plan.json',plain,'/base/bin/python')
-        self.assertNotIn('mimas_scope.py',inner);self.assertIn('-m venv',inner)
+        self.assertNotIn('hpc_scope.py',inner);self.assertIn('-m venv',inner)
         plain['runtime_interpreter']='base_symlink'
         self.assertIn('-m venv --symlinks',package.smoke_batch('/payload/plan.json',plain,'/base/bin/python'))
 
     def test_batch_rejects_injection_and_unbounded_requests(self):
         plan = {'run_root': '/run/new', 'runtime_prefix': '/runtime/new',
                 'runtime_python': '/runtime/new/bin/python', 'wheelhouse': '/payload/wheels',
-                'requirements': '/payload/requirements.txt', 'runner': '/source/mimas_cpu.py',
+                'requirements': '/payload/requirements.txt', 'runner': '/source/hpc_cpu.py',
                 'partition': 'debug\n#SBATCH --gres=gpu:1', 'resources': {'maximum_cpus': 1,
                 'maximum_memory_bytes': 4*1024**3, 'maximum_wall_seconds': 900}}
         with self.assertRaises(ValueError):package.smoke_batch('/payload/plan.json', plan, '/base/bin/python')

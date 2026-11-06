@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import mimas_cpu as subject
+import hpc_cpu as subject
 
 
 class FakeContract:
@@ -80,12 +80,12 @@ class ControllerTests(unittest.TestCase):
 
     def plan(self, phase='smoke', **updates):
         source = Path(subject.__file__).absolute().parent
-        value = dict(operation='mimas-cpu-validation', phase=phase,
+        value = dict(operation='hpc-cpu-validation', phase=phase,
                      stages=list(subject.STAGES[phase]),
                      maximum_projection_fits=subject.FIT_LIMITS[phase][0],
                      maximum_hdbscan_extractions=subject.FIT_LIMITS[phase][1],
                      frozen_files=[subject.record(source / name) for name in
-                                   ('mimas_cpu.py', 'mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py')],
+                                   ('hpc_cpu.py', 'hpc_contract.py', 'hpc_smoke.py', 'hpc_pilot.py')],
                      run_root=str(self.root), runtime_python='/approved/runtime/bin/python',
                      runtime_prefix='/approved/runtime',
                      resources=dict(maximum_cpus=1, maximum_memory_bytes=2 * 1024**3,
@@ -190,7 +190,7 @@ class ControllerTests(unittest.TestCase):
             subject.verify(self.plan_path)
 
     def test_controller_and_each_sibling_must_be_hash_bound(self):
-        for name in ('mimas_cpu.py', 'mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py'):
+        for name in ('hpc_cpu.py', 'hpc_contract.py', 'hpc_smoke.py', 'hpc_pilot.py'):
             with self.subTest(name=name):
                 value = self.plan()
                 value['frozen_files'] = [e for e in value['frozen_files'] if Path(e['path']).name != name]
@@ -396,7 +396,7 @@ class ControllerTests(unittest.TestCase):
         self.contract.observations = [FakeContract.observation(fit=False)]
         fake_smoke = SimpleNamespace(run_smoke=Mock(return_value=dict(
             status='smoke_complete_fit_blocked', smoke_checks_passed=True, fit_ready=False)))
-        with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+        with patch.dict(sys.modules, hpc_smoke=fake_smoke):
             subject.child(self.plan_path, 'smoke', context, subject.sha(context))
         fake_smoke.run_smoke.assert_called_once()
         self.assertEqual(self.contract.fit_checks, [])
@@ -404,7 +404,7 @@ class ControllerTests(unittest.TestCase):
     def test_child_context_hash_mismatch_blocks_import_work(self):
         context = self.prepare_child()
         fake_smoke = SimpleNamespace(run_smoke=Mock(side_effect=AssertionError('must not import work')))
-        with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+        with patch.dict(sys.modules, hpc_smoke=fake_smoke):
             with self.assertRaisesRegex(ValueError, 'context changed'):
                 subject.child(self.plan_path, 'smoke', context, '0' * 64)
         fake_smoke.run_smoke.assert_not_called()
@@ -413,7 +413,7 @@ class ControllerTests(unittest.TestCase):
         context = self.prepare_child()
         (self.root / 'stages' / 'smoke').mkdir()
         fake_smoke = SimpleNamespace(run_smoke=Mock(side_effect=AssertionError('must not export work')))
-        with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+        with patch.dict(sys.modules, hpc_smoke=fake_smoke):
             with self.assertRaisesRegex(ValueError, 'Owned stage output required'):
                 subject.child(self.plan_path, 'smoke', context, subject.sha(context))
         fake_smoke.run_smoke.assert_not_called()
@@ -424,7 +424,7 @@ class ControllerTests(unittest.TestCase):
         value['controller_pid'] = os.getppid() + 1
         context.write_text(json.dumps(value))
         fake_smoke = SimpleNamespace(run_smoke=Mock(side_effect=AssertionError('must not run')))
-        with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+        with patch.dict(sys.modules, hpc_smoke=fake_smoke):
             with self.assertRaisesRegex(ValueError, 'different live controller'):
                 subject.child(self.plan_path, 'smoke', context, subject.sha(context))
         fake_smoke.run_smoke.assert_not_called()
@@ -439,11 +439,11 @@ class ControllerTests(unittest.TestCase):
                            ('hdbscan_extraction_ceiling', 1)]:
             with self.subTest(field=key):
                 path.write_text(json.dumps(dict(original, **{key: value})))
-                with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+                with patch.dict(sys.modules, hpc_smoke=fake_smoke):
                     with self.assertRaisesRegex(ValueError, 'Charged native stage intent differs'):
                         subject.child(self.plan_path, 'smoke', context, subject.sha(context))
         path.unlink()
-        with patch.dict(sys.modules, mimas_smoke=fake_smoke):
+        with patch.dict(sys.modules, hpc_smoke=fake_smoke):
             with self.assertRaises(FileNotFoundError):
                 subject.child(self.plan_path, 'smoke', context, subject.sha(context))
         fake_smoke.run_smoke.assert_not_called()

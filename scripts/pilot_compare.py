@@ -31,8 +31,8 @@ def _pilot():
     source = str(Path(__file__).absolute().parent)
     if source not in sys.path:
         sys.path.insert(0, source)
-    import mimas_pilot
-    return mimas_pilot
+    import hpc_pilot
+    return hpc_pilot
 
 
 def _content(entry):
@@ -147,7 +147,7 @@ def _source_proof(receipt, plan):
         _same(sources[name].get('sha256'), sha, 'Native source bytes differ: ' + name)
     module = receipt['module_source']
     matches = [item for item in plan['frozen_files']
-               if Path(item['path']).name == 'mimas_pilot.py' and _content(item) == _content(module)]
+               if Path(item['path']).name == 'hpc_pilot.py' and _content(item) == _content(module)]
     need(len(matches) == 1, 'Pilot adapter source is not bound by its execution plan')
     return module['sha256']
 
@@ -457,13 +457,13 @@ def _markdown(result):
             details = ('Rigid residual ' + number(geometry['aligned_normalized_residual'])
                 + '; pair-distance error ' + number(geometry['relative_pairwise_error'])
                 + '; scale ratio ' + number(geometry['scale_ratio'])
-                + '; trustworthiness Pax/Mimas ' + number(neighbors['reference_trustworthiness'])
+                + '; trustworthiness Workstation/HPC ' + number(neighbors['reference_trustworthiness'])
                 + '/' + number(neighbors['candidate_trustworthiness'])
                 + '; neighbor overlap ' + number(neighbors['cross_host_neighbor_overlap']))
         else:
             labels = item['partition']
             details = ('ARI ' + number(labels['adjusted_rand_index'])
-                + '; noise Pax/Mimas ' + str(labels['reference_noise_models'])
+                + '; noise Workstation/HPC ' + str(labels['reference_noise_models'])
                 + '/' + str(labels['candidate_noise_models'])
                 + '; identical noise masks ' + str(labels['noise_masks_identical']).lower())
         lines.append('| ' + stage + ' | ' + item['status'].replace('_', ' ') + ' | ' + details + ' |')
@@ -494,24 +494,24 @@ def compare(input_manifest, output, *, check=lambda: None):
          and expected.get('retained_reference_positions') == list(range(57, 951))
          and expected.get('pair_mask_sha256') == pilot.SERCA_PAIR_MASK,
          'Exactly the accepted SERCA 64-model core58–951 is required')
-    need(set(manifest['hosts']) == {'pax', 'mimas'}
-         and set(contract['host_plans']) == {'pax', 'mimas'}, 'One Pax and one Mimas pilot required')
+    need(set(manifest['hosts']) == {'workstation', 'hpc'}
+         and set(contract['host_plans']) == {'workstation', 'hpc'}, 'One Workstation and one HPC pilot required')
     hosts = {}
-    for name in ('pax', 'mimas'):
+    for name in ('workstation', 'hpc'):
         host = manifest['hosts'][name]
         _same(_content(host['plan']), _content(contract['host_plans'][name]),
               'Host execution plan differs from the frozen comparison contract')
         hosts[name] = _load_host(host, expected, check)
-    _same(hosts['pax']['identity'], hosts['mimas']['identity'], 'Original cohort identities/flags differ')
-    _same(hosts['pax']['protocol'], hosts['mimas']['protocol'], 'Cross-host source/settings/protocol differ')
+    _same(hosts['workstation']['identity'], hosts['hpc']['identity'], 'Original cohort identities/flags differ')
+    _same(hosts['workstation']['protocol'], hosts['hpc']['protocol'], 'Cross-host source/settings/protocol differ')
     distances, feature_diagnostic = feature_distances(expected['features'], expected['feature_sha256'], check=check)
-    _same(hosts['pax']['protocol']['density_feature_sha256'], feature_diagnostic['float32_sha256'],
+    _same(hosts['workstation']['protocol']['density_feature_sha256'], feature_diagnostic['float32_sha256'],
           'Density float32 feature proof differs from the bound raw F16 values')
     stages = {}
     thresholds = contract['thresholds']
     for stage in ('pca', 'umap', 'tsne'):
         check()
-        a, b = hosts['pax']['arrays'][stage], hosts['mimas']['arrays'][stage]
+        a, b = hosts['workstation']['arrays'][stage], hosts['hpc']['arrays'][stage]
         values = geometry(a, b, thresholds)
         if stage == 'pca':
             passes = (not values['degenerate']
@@ -523,7 +523,7 @@ def compare(input_manifest, output, *, check=lambda: None):
         stages[stage] = dict(status='numerically_equivalent_within_frozen_tolerance' if passes else 'review_required',
                              geometry=values, neighborhood=neighborhood(distances, a, b, thresholds['neighbor_k']))
     for stage in ('labels', 'density0'):
-        values = partition(hosts['pax']['arrays'][stage].tolist(), hosts['mimas']['arrays'][stage].tolist(), density=stage == 'density0')
+        values = partition(hosts['workstation']['arrays'][stage].tolist(), hosts['hpc']['arrays'][stage].tolist(), density=stage == 'density0')
         stages[stage] = dict(status=values['status'], partition=values)
     passed = all(stages[stage]['status'] == 'numerically_equivalent_within_frozen_tolerance'
                  for stage in ('pca', 'umap', 'tsne')) and all(
@@ -534,9 +534,9 @@ def compare(input_manifest, output, *, check=lambda: None):
         full_cohort_results_preserved_claim=False, diagnostic_not_full_clustering=True,
         comparison_contract=manifest['contract'], comparator_source=contract['comparator_source'],
         expected=expected, feature_diagnostic=feature_diagnostic,
-        model_identity_sha256=_compact(hosts['pax']['identity']),
-        protocol=hosts['pax']['protocol'], thresholds=thresholds, stages=stages,
-        runtime_records_identical=hosts['pax']['runtime'] == hosts['mimas']['runtime'],
+        model_identity_sha256=_compact(hosts['workstation']['identity']),
+        protocol=hosts['workstation']['protocol'], thresholds=thresholds, stages=stages,
+        runtime_records_identical=hosts['workstation']['runtime'] == hosts['hpc']['runtime'],
         runtimes={name:dict(source=manifest['hosts'][name]['runtime'], facts=hosts[name]['runtime']) for name in hosts},
         input_receipts={name:manifest['hosts'][name]['receipts'] for name in hosts},
         observed_fit_accounting={name:{stage:hosts[name]['receipts'][stage]['scientific_fits']

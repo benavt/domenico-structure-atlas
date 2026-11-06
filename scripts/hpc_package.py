@@ -122,7 +122,7 @@ def smoke_batch(plan_path, plan, bootstrap_python, *, environment_exists=False):
              'export PIP_CONFIG_FILE=/dev/null',
              'export PIP_DISABLE_PIP_VERSION_CHECK=1', 'export PIP_NO_CACHE_DIR=1']
     if plan.get('containment', {}).get('mode') == 'user_scope':
-        scope_runner = str(Path(plan['runner']).with_name('mimas_scope.py'))
+        scope_runner = str(Path(plan['runner']).with_name('hpc_scope.py'))
         lines += ['exec '+q(bootstrap_python)+' -I '+q(scope_runner)+' launch '+q(str(plan_path))]
         return '\n'.join(lines)+'\n'
     if not environment_exists:

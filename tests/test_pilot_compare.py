@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import pilot_compare as subject
-import mimas_pilot as pilot
+import hpc_pilot as pilot
 
 
 def put(path, value):
@@ -73,7 +73,7 @@ class SavedComparisonTests(unittest.TestCase):
         self.feature_diagnostic = dict(float32_sha256='d' * 64, raw_float16_sha256='a' * 64)
         self.host_plans = {}
         self.host_specs = {}
-        for hostname in ('pax', 'mimas'):
+        for hostname in ('workstation', 'hpc'):
             directory = self.root / hostname
             directory.mkdir()
             members = [dict(model=name, local_path='/native/' + hostname + '/' + name + '.pdb',
@@ -84,7 +84,7 @@ class SavedComparisonTests(unittest.TestCase):
             spec['members'] = put(directory / 'members.json', dict(members=members))
             config = put(directory / 'cluster-config.json', dict(schema_version=1, settings=pilot.DEFAULT_COMPONENT_SETTINGS))
             module = pilot.record(pilot.__file__)
-            plan = dict(operation='mimas-cpu-validation', phase='pilot64', target='SERCA_P04191',
+            plan = dict(operation='hpc-cpu-validation', phase='pilot64', target='SERCA_P04191',
                 stages=list(subject.STAGES), maximum_projection_fits=9, maximum_hdbscan_extractions=6,
                 inputs=spec, native=dict(library_commit=pilot.LIBRARY_COMMIT,
                     density_source=dict(path='/native/' + hostname + '/hd_density_experiment.py',
@@ -173,11 +173,11 @@ class SavedComparisonTests(unittest.TestCase):
             return subject.compare(self.manifest, self.root / name)
 
     def change_receipt(self, stage, change):
-        entry = self.host_specs['mimas']['receipts'][stage]
+        entry = self.host_specs['hpc']['receipts'][stage]
         path = Path(entry['path'])
         result = json.loads(path.read_text())
         change(result)
-        self.host_specs['mimas']['receipts'][stage] = put(path, result)
+        self.host_specs['hpc']['receipts'][stage] = put(path, result)
 
     def replace_coordinates(self, stage, value):
         def update(receipt):
@@ -223,17 +223,17 @@ class SavedComparisonTests(unittest.TestCase):
         self.assertEqual(result['stages']['umap']['neighborhood']['cross_host_neighbor_overlap'], 1)
 
     def test_missing_or_failed_stage_never_passes_or_creates_output(self):
-        entry = self.host_specs['mimas']['receipts'].pop('density0')
+        entry = self.host_specs['hpc']['receipts'].pop('density0')
         with self.assertRaisesRegex(ValueError, 'five closed'):
             self.compare()
-        self.host_specs['mimas']['receipts']['density0'] = entry
+        self.host_specs['hpc']['receipts']['density0'] = entry
         self.change_receipt('density0', lambda result: result.update(phase_complete=False))
         with self.assertRaisesRegex(ValueError, 'incomplete'):
             self.compare()
         self.assertFalse((self.root / 'comparison').exists())
 
     def test_tampered_saved_output_is_integrity_failure(self):
-        receipt = json.loads(Path(self.host_specs['mimas']['receipts']['umap']['path']).read_text())
+        receipt = json.loads(Path(self.host_specs['hpc']['receipts']['umap']['path']).read_text())
         Path(receipt['projection']['path']).write_bytes(b'changed after closure')
         with self.assertRaises(ValueError):
             self.compare()
@@ -242,12 +242,12 @@ class SavedComparisonTests(unittest.TestCase):
     def test_wrong_cohort_full_cohort_or_core_rejected_before_geometry(self):
         for key, value in [('model_count', 5072), ('model_order_sha256', 'f' * 64),
                            ('retained_reference_positions', list(range(58, 952)))]:
-            plan = deepcopy(self.host_plans['mimas'])
+            plan = deepcopy(self.host_plans['hpc'])
             plan['inputs'][key] = value
-            self.host_specs['mimas']['plan'] = put(self.root / 'mimas/execution-plan.json', plan)
+            self.host_specs['hpc']['plan'] = put(self.root / 'hpc/execution-plan.json', plan)
             contract_path = self.root / 'contract.json'
             contract = json.loads(contract_path.read_text())
-            contract['host_plans']['mimas'] = self.host_specs['mimas']['plan']
+            contract['host_plans']['hpc'] = self.host_specs['hpc']['plan']
             self.manifest['contract'] = put(contract_path, contract)
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'input identity'):
                 self.compare()
@@ -267,14 +267,14 @@ class SavedComparisonTests(unittest.TestCase):
         locations = {}
         def move(receipt):
             old = receipt['projection']
-            remote = dict(old, path='/remote/mimas/umap/projection.npz')
+            remote = dict(old, path='/remote/hpc/umap/projection.npz')
             locations[remote['path']] = old
             receipt['projection'] = remote
             receipt['outputs'] = [remote if item == old else item for item in receipt['outputs']]
         self.change_receipt('umap', move)
-        self.host_specs['mimas']['artifact_locations'] = locations
+        self.host_specs['hpc']['artifact_locations'] = locations
         self.assertTrue(self.compare()['protocol_parity'])
-        locations['/remote/mimas/umap/projection.npz']['sha256'] = '0' * 64
+        locations['/remote/hpc/umap/projection.npz']['sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'Relocation changed'):
             self.compare('bad-relocation')
 
