@@ -53,4 +53,19 @@ class InputTests(unittest.TestCase):
   self.assertEqual(p.choose(rows,4,42),p.choose(list(reversed(rows)),4,42))
   self.assertIn('m0',p.choose(rows,4,42))
   with self.assertRaises(ValueError):p.choose(rows,0,42)
+ def test_existing_originals_mode_keeps_native_paths_without_copying_models(self):
+  with tempfile.TemporaryDirectory()as tmp:
+   root=Path(tmp);spec=self.fixture(root);spec['model_storage']='existing_originals';out=root/'out'
+   r=p.prepare(spec,out);self.assertEqual(r['model_storage'],'existing_originals')
+   self.assertFalse((out/'models').exists())
+   members=json.loads((out/'members-pax.json').read_text())['members']
+   self.assertTrue(all(Path(m['local_path']).parent==root for m in members))
+   self.assertTrue(all(not Path(m['local_path']).is_relative_to(out)for m in members))
+   self.assertEqual(r['scientific_fits'],0)
+ def test_bad_storage_or_impossible_reserve_stops_before_output(self):
+  for update in [dict(model_storage='symlinks'),dict(minimum_free_disk_bytes=10**30)]:
+   with self.subTest(update=update),tempfile.TemporaryDirectory()as tmp:
+    root=Path(tmp);spec=self.fixture(root);spec.update(update)
+    with self.assertRaises(ValueError):p.prepare(spec,root/'out')
+    self.assertFalse((root/'out').exists())
 if __name__=='__main__':unittest.main()
