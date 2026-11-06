@@ -90,7 +90,7 @@ class DensitySnapshotTests(unittest.TestCase):
         for missing in (False, True):
             with self.subTest(missing=missing):
                 self.write_archive(comment='0'*40, global_comment=not missing)
-                with self.assertRaisesRegex(ValueError, 'global WORKSTATION commit'):
+                with self.assertRaisesRegex(ValueError, 'global extended tar header commit'):
                     native.load_native(self.source())
 
     def test_payload_must_equal_both_staged_pinned_sources(self):
