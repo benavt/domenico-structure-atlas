@@ -18,7 +18,7 @@ def stages(plan):
 def verify_curve_plan(plan):
     """Read-only provenance check for a recipe-bound pair of public UMAP scalars."""
     cpu, _, _ = modules(); spec = plan['curve_control']
-    if (plan.get('diagnostic_profile') != 'native' or plan.get('stages') != ['umap1']
+    if (plan.get('diagnostic_profile') != 'native' or plan.get('stages') != (['umap1','labels','density']if plan.get('phase')=='serca-full'else ['umap1'])
             or spec.get('policy') != 'public-umap-a-b-from-closed-pax-trace'
             or 'layouts' not in plan['trace_sources']):
         raise ValueError('Exact matched-curve native UMAP scope required')

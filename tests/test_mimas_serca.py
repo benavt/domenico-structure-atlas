@@ -38,6 +38,16 @@ class PrimaryCurveTests(unittest.TestCase):
 
 
 class ProductionGuardTests(unittest.TestCase):
+    def test_full_curve_provenance_guard_accepts_three_stage_scope_before_reading_proofs(self):
+        import reducer_diagnostic as diag
+        class ProvenanceReached(Exception):pass
+        entry=dict(path='/bound/recipe',bytes=1,sha256='a'*64)
+        p=dict(phase='serca-full',diagnostic_profile='native',stages=['umap1','labels','density'],curve_control=dict(policy='public-umap-a-b-from-closed-pax-trace',recipe=entry),trace_sources={'layouts':{}},frozen_files=[entry])
+        fake=SimpleNamespace(bound=lambda _:(_ for _ in()).throw(ProvenanceReached()))
+        with patch.object(diag,'modules',return_value=(fake,None,None)):
+            with self.assertRaises(ProvenanceReached):diag.verify_curve_plan(p)
+            p['stages']=['umap1']
+            with self.assertRaisesRegex(ValueError,'scope required'):diag.verify_curve_plan(p)
     def test_long_deadline_is_enabled_only_for_explicit_production(self):
         import mimas_package as package
         p=dict(run_root='/run/scoped',runtime_prefix='/runtime',runtime_python='/runtime/bin/python',wheelhouse='/wheels',requirements='/requirements',runner='/controller.py',partition='debug',phase='smoke',resources=dict(maximum_cpus=4,maximum_memory_bytes=64*1024**3,maximum_wall_seconds=8*3600))
