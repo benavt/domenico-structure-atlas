@@ -12,9 +12,9 @@ import unittest
 from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import reducer_diagnostic as diag
-import mimas_contract as contract
-import mimas_cpu as cpu
-import mimas_package as package
+import hpc_contract as contract
+import hpc_cpu as cpu
+import hpc_package as package
 
 
 class ProfileTests(unittest.TestCase):
@@ -72,10 +72,10 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(cpu.FIT_LIMITS['repro64'],(6,0))
         self.assertEqual(sum(cpu.STAGE_LIMITS[s][0]for s in cpu.STAGES['repro64']),6)
         p=dict(phase='repro64',run_root='/run/new',runtime_prefix='/runtime',runtime_python='/runtime/bin/python',
-            runner='/source/mimas_cpu.py',wheelhouse='/wheels',requirements='/requirements.txt',partition='debug',
+            runner='/source/hpc_cpu.py',wheelhouse='/wheels',requirements='/requirements.txt',partition='debug',
             resources=dict(maximum_cpus=2,maximum_memory_bytes=8*1024**3,maximum_wall_seconds=3600))
         body=package.smoke_batch('/plan.json',p,'/base/bin/python',environment_exists=True)
-        self.assertIn('mimas_cpu.py run /plan.json',body);self.assertNotIn('pip install',body)
+        self.assertIn('hpc_cpu.py run /plan.json',body);self.assertNotIn('pip install',body)
         self.assertNotIn('-m venv',body)
 
     def test_isolated_children_use_explicit_bytecode_flags_not_ignored_env(self):
@@ -172,9 +172,9 @@ class ReceiptTests(unittest.TestCase):
         inputs=dict(model_count=64,feature_sha256='f'*64,model_order_sha256='e'*64,pair_mask_sha256='d'*64)
         receipt=put('receipt.json',dict(phase_complete=True,diagnostic_profile='native',stage='tsne1',
             inputs=inputs,native_library_commit='a'*40,trace=trace))
-        source=put('source-plan.json',dict(execution_host='pax',diagnostic_profile='native',phase='repro64'))
+        source=put('source-plan.json',dict(execution_host='workstation',diagnostic_profile='native',phase='repro64'))
         closed=put('completion.json',dict(status='diagnostic_pilot_complete',plan_sha256=source['sha256'],stage_receipts=dict(tsne1=receipt)))
-        isolation=dict(optimizer_epochs=[0,1],initialization_policy='hash-bound-pax-native-gradient-entry',
+        isolation=dict(optimizer_epochs=[0,1],initialization_policy='hash-bound-workstation-native-gradient-entry',
             tsne_initialization=entry,initialization_receipt=receipt,initialization_trace=trace,
             initialization_plan=source,initialization_completion=closed)
         return dict(phase='isolate64',diagnostic_profile='native',stages=['umap1','tsne1'],
@@ -196,7 +196,7 @@ class ReceiptTests(unittest.TestCase):
                 if change=='initialization':Path(p['isolation']['tsne_initialization']['path']).write_bytes(b'changed')
                 elif change=='cohort':p['inputs']=dict(p['inputs'],pair_mask_sha256='0'*64)
                 else:
-                    e=p['isolation']['initialization_plan'];q=Path(e['path']);d=json.loads(q.read_text());d['execution_host']='mimas';q.write_text(json.dumps(d))
+                    e=p['isolation']['initialization_plan'];q=Path(e['path']);d=json.loads(q.read_text());d['execution_host']='hpc';q.write_text(json.dumps(d))
                 with self.assertRaises(ValueError):diag.verify_isolation_plan(p)
 
     def test_isolation_adapter_forwards_explicit_intervention_and_extended_trace(self):
@@ -237,9 +237,9 @@ class ReceiptTests(unittest.TestCase):
         diag.verify_predecessor({'diagnostic_profile':'native'})
         with tempfile.TemporaryDirectory()as tmp:
             path=Path(tmp)/'native-plan.json';path.write_text(json.dumps(dict(phase='repro64',diagnostic_profile='native',
-                inputs={'cohort':'other'},native={},sources={},execution_host='pax')))
+                inputs={'cohort':'other'},native={},sources={},execution_host='workstation')))
             entry=cpu.record(path);p=dict(diagnostic_profile='generic-jit-v1',native_predecessor=entry,frozen_files=[entry],
-                inputs={'cohort':'expected'},native={},sources={},execution_host='pax')
+                inputs={'cohort':'expected'},native={},sources={},execution_host='workstation')
             # Pair-gate absence must block before inspecting any predecessor.
             p['native_pair_gate']=str(Path(tmp)/'missing-gate.json')
             with self.assertRaises(FileNotFoundError):diag.verify_predecessor(p)

@@ -10,7 +10,7 @@ def modules():
     sys.path.insert(0, str(Path(__file__).absolute().parent))
     import reducer_trace_compare as saved
     import pilot_compare as geometry
-    import mimas_cpu as cpu
+    import hpc_cpu as cpu
     return saved, geometry, cpu
 
 
@@ -30,8 +30,8 @@ def compare(request_path, output):
     if (master.get('operation') != 'paired-reducer-isolation'
             or master['maximum_projection_fits'] != 6 or master['maximum_hdbscan_extractions'] != 0
             or saved.read(master['analysis_source']) != Path(__file__).absolute()
-            or set(master['host_plans']) != {'pax', 'mimas'}
-            or set(request['runs']) != {'pax', 'mimas'}):
+            or set(master['host_plans']) != {'workstation', 'hpc'}
+            or set(request['runs']) != {'workstation', 'hpc'}):
         raise ValueError('Wrong isolation scope or comparator')
     stages = {}; reference = {}; accounting = {}; identity = None
     def load(host, entry, spec, isolation):
@@ -98,7 +98,7 @@ def compare(request_path, output):
             if counts != dict(PCA=1, UMAP=1, TSNE=1, HDBSCAN=0): raise ValueError('Wrong isolation counts')
             accounting[host] = counts
         return result
-    for host in ('pax', 'mimas'):
+    for host in ('workstation', 'hpc'):
         stages[host] = load(host, master['host_plans'][host], request['runs'][host], True)
         proof = master['reference_runs'][host]
         reference[host] = load(host, proof['plan'], proof, False)
@@ -117,10 +117,10 @@ def compare(request_path, output):
             effective_checkpoint_differences=effective,
             coordinate_gate_passed=passed, geometry=g))
     for stage in ('umap1', 'tsne1'):
-        if [e['name'] for e in stages['pax'][stage]['events']] != [e['name'] for e in stages['mimas'][stage]['events']]:
+        if [e['name'] for e in stages['workstation'][stage]['events']] != [e['name'] for e in stages['hpc'][stage]['events']]:
             raise ValueError('Different checkpoint interfaces')
-        pair('cross-host-' + stage, stages['pax'][stage], stages['mimas'][stage])
-        for host in ('pax', 'mimas'): pair(host + '-new-vs-native-' + stage, stages[host][stage], reference[host][stage])
+        pair('cross-host-' + stage, stages['workstation'][stage], stages['hpc'][stage])
+        for host in ('workstation', 'hpc'): pair(host + '-new-vs-native-' + stage, stages[host][stage], reference[host][stage])
     output = Path(output)
     if not output.is_absolute() or output.exists() or any(p.is_symlink() for p in (output, *output.parents)):
         raise ValueError('Fresh comparison output required')

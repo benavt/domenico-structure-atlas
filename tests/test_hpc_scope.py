@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import mimas_scope as subject
+import hpc_scope as subject
 
 
 class ScopeTests(unittest.TestCase):
@@ -246,7 +246,7 @@ class ScopeTests(unittest.TestCase):
                 self.assertEqual(actual, code)
                 self.assertEqual(popen.call_args.args[0], ['/bin/bash', str(self.root / 'scoped.sbatch')])
                 env = popen.call_args.kwargs['env']
-                self.assertEqual(env['MIMAS_SCOPE_BINDING_SHA256'], 'c' * 64)
+                self.assertEqual(env['HPC_SCOPE_BINDING_SHA256'], 'c' * 64)
                 cleanup.assert_called_once()
 
     def test_keeper_parent_loss_cleans_scope_without_false_exit_receipt(self):

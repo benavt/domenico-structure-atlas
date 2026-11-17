@@ -19,7 +19,7 @@ def verify_curve_plan(plan):
     """Read-only provenance check for a recipe-bound pair of public UMAP scalars."""
     cpu, _, _ = modules(); spec = plan['curve_control']
     if (plan.get('diagnostic_profile') != 'native' or plan.get('stages') != ['umap1']
-            or spec.get('policy') != 'public-umap-a-b-from-closed-pax-trace'
+            or spec.get('policy') != 'public-umap-a-b-from-closed-workstation-trace'
             or 'layouts' not in plan['trace_sources']):
         raise ValueError('Exact matched-curve native UMAP scope required')
     for key in ('recipe', 'source_plan', 'source_completion', 'source_receipt', 'source_trace', 'source_scalars'):
@@ -31,7 +31,7 @@ def verify_curve_plan(plan):
     recipe = read('recipe'); source = read('source_plan'); completion = read('source_completion')
     receipt = read('source_receipt'); trace = read('source_trace'); scalar = read('source_scalars')
     if (set(recipe) != {'a', 'b', 'spread', 'min_dist'}
-            or source.get('execution_host') != 'pax' or source.get('phase') != 'isolate64'
+            or source.get('execution_host') != 'workstation' or source.get('phase') != 'isolate64'
             or source.get('diagnostic_profile') != 'native'
             or completion.get('status') != 'diagnostic_pilot_complete'
             or completion.get('plan_sha256') != spec['source_plan']['sha256']
@@ -49,7 +49,7 @@ def verify_curve_plan(plan):
             or any(receipt['inputs'][k] != plan['inputs'][k] for k in
                    (('construct_residues','retained_reference_positions','pair_mask_sha256') if plan['phase']=='curve1000' else
                     ('model_count','construct_residues','retained_reference_positions','feature_sha256','model_order_sha256','pair_mask_sha256')))):
-        raise ValueError('Curve recipe is not the closed native Pax recipe for this cohort')
+        raise ValueError('Curve recipe is not the closed native Workstation recipe for this cohort')
     if plan['phase']=='curve1000':
         import saved_curve_evidence
         entry=plan['correspondence64']
@@ -75,7 +75,7 @@ def verify_isolation_plan(plan):
     spec = plan.get('isolation', {})
     if (plan.get('diagnostic_profile') != 'native'
             or spec.get('optimizer_epochs') != [0, 1]
-            or spec.get('initialization_policy') != 'hash-bound-pax-native-gradient-entry'
+            or spec.get('initialization_policy') != 'hash-bound-workstation-native-gradient-entry'
             or 'layouts' not in plan['trace_sources']
             or plan.get('stages') != list(ISOLATION_STAGES)):
         raise ValueError('Exact native optimizer/initialization isolation scope required')
@@ -90,7 +90,7 @@ def verify_isolation_plan(plan):
     completion = json.loads(cpu.bound(spec['initialization_completion']).read_text())
     # Descriptors can relocate, but scientific content and exact source are preserved.
     entry = spec['tsne_initialization']
-    if (source_plan.get('execution_host') != 'pax' or source_plan.get('diagnostic_profile') != 'native'
+    if (source_plan.get('execution_host') != 'workstation' or source_plan.get('diagnostic_profile') != 'native'
             or source_plan.get('phase') != 'repro64'
             or completion.get('status') != 'diagnostic_pilot_complete'
             or completion.get('plan_sha256') != spec['initialization_plan']['sha256']
@@ -107,17 +107,17 @@ def verify_isolation_plan(plan):
                        and event['shape'] == [128] and event['dtype'] == '<f4'
                        and event['artifact']['sha256'] == entry['sha256']
                        and event['artifact']['bytes'] == entry['bytes'] for event in trace['events'])):
-        raise ValueError('Shared initialization is not the verified native Pax gradient-entry state')
+        raise ValueError('Shared initialization is not the verified native Workstation gradient-entry state')
 
 
 def modules():
     source = str(Path(__file__).absolute().parent)
     if source not in sys.path:
         sys.path.insert(0, source)
-    import mimas_cpu
-    import mimas_contract
-    import mimas_pilot
-    return mimas_cpu, mimas_contract, mimas_pilot
+    import hpc_cpu
+    import hpc_contract
+    import hpc_pilot
+    return hpc_cpu, hpc_contract, hpc_pilot
 
 
 def helper(plan):
@@ -190,9 +190,9 @@ def verify_runtime_payload(plan, root):
 
 def verify_predecessor(plan):
     """Generic trials require this host's fully closed, verified native trials."""
-    if plan.get('phase')=='curve1000' and plan.get('execution_host')=='mimas':
+    if plan.get('phase')=='curve1000' and plan.get('execution_host')=='hpc':
         import saved_curve_evidence
-        saved_curve_evidence.verify_pax1000_predecessor(plan)
+        saved_curve_evidence.verify_workstation1000_predecessor(plan)
         return
     if plan['diagnostic_profile'] == 'native':
         return
@@ -230,7 +230,7 @@ def verify_native_pair(plan, gate):
     cpu, _, pilot = modules()
     import reducer_trace_compare as saved
     if (gate.get('operation') != 'closed-native-pair-gate'
-            or set(gate.get('runs',{})) != {'pax-native','mimas-native'}):
+            or set(gate.get('runs',{})) != {'workstation-native','hpc-native'}):
         raise ValueError('Both closed native diagnostic proofs are required')
     keys=('model_count','construct_residues','retained_reference_positions',
           'feature_sha256','model_order_sha256','pair_mask_sha256')

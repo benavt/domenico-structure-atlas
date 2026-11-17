@@ -9,7 +9,7 @@ import tempfile
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import reducer_trace_compare as subject
-import mimas_pilot as pilot
+import hpc_pilot as pilot
 import reducer_diagnostic as diag
 
 
@@ -28,7 +28,7 @@ class SavedComparisonTests(unittest.TestCase):
         source=pilot.record(subject.__file__)
         helper={'path':'/bound/helper','bytes':1,'sha256':'b'*64}
         order=hashlib.sha256('\n'.join(self.names).encode()).hexdigest()
-        for key in ['pax-native','mimas-native','pax-generic','mimas-generic']:
+        for key in ['workstation-native','hpc-native','workstation-generic','hpc-generic']:
             profile='native'if key.endswith('-native')else'generic-jit-v1'
             inputs=dict(model_count=64,construct_residues=993,retained_reference_positions=list(range(57,951)),feature_sha256='f'*64,pair_mask_sha256='e'*64,model_order_sha256=order)
             plan=dict(phase='repro64',inputs=inputs,diagnostic_profile=profile,native=dict(library_commit=pilot.LIBRARY_COMMIT),
@@ -61,12 +61,12 @@ class SavedComparisonTests(unittest.TestCase):
     def test_native_pair_gate_requires_both_complete_native_runs(self):
         request=self.fixture();manifest=json.loads(Path(request['path']).read_text())
         master=json.loads(Path(manifest['master']['path']).read_text())
-        names=['pax-native','mimas-native'];native=json.loads(Path(master['host_plans']['pax-native']['path']).read_text())
+        names=['workstation-native','hpc-native'];native=json.loads(Path(master['host_plans']['workstation-native']['path']).read_text())
         context=dict(inputs=native['inputs'],native=native['native'],portability_helper=native['portability_helper'],
             native_gate_plan_shas={k:master['host_plans'][k]['sha256']for k in names})
         gate=dict(operation='closed-native-pair-gate',runs={k:dict(manifest['runs'][k],plan=master['host_plans'][k])for k in names})
         diag.verify_native_pair(context,gate)
-        gate['runs'].pop('mimas-native')
+        gate['runs'].pop('hpc-native')
         with self.assertRaises(ValueError):diag.verify_native_pair(context,gate)
 
     def test_changed_closed_receipt_is_rejected(self):

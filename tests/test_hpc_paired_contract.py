@@ -10,18 +10,18 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
-import mimas_contract as contract
-import mimas_package as package
-import mimas_scope as scope
+import hpc_contract as contract
+import hpc_package as package
+import hpc_scope as scope
 
 GIB = 1024**3
 
 
 class PairedContractTests(unittest.TestCase):
-    def fixture(self, root, *, host='pax'):
-        uid = os.getuid(); unit = 'domenico-paired64-pax.service'
+    def fixture(self, root, *, host='workstation'):
+        uid = os.getuid(); unit = 'domenico-paired64-workstation.service'
         membership = ('/user.slice/user-{0}.slice/user@{0}.service/app.slice/{1}'.format(uid, unit)
-                      if host=='pax' else '/slurm/job771/step0')
+                      if host=='workstation' else '/slurm/job771/step0')
         proc = root/'proc'; process = proc/'123'; process.mkdir(parents=True)
         controller = root/'controllers'; mount = controller/'unified'; leaf = mount/membership.lstrip('/')
         leaf.mkdir(parents=True)
@@ -36,8 +36,8 @@ class PairedContractTests(unittest.TestCase):
             runtime_python='/approved/runtime/bin/python',runtime_prefix='/approved/runtime',
             resources=dict(maximum_cpus=1,maximum_memory_bytes=8*GIB,maximum_swap_bytes=0,
                 maximum_pids=64,maximum_wall_seconds=3600))
-        if host=='pax':plan.update(unit_name=unit); plan['resources']['required_uid'] = uid
-        original = {} if host=='pax' else dict(SLURM_JOB_ID='771',SLURM_NNODES='1',SLURM_NTASKS='1',SLURM_CPUS_PER_TASK='1')
+        if host=='workstation':plan.update(unit_name=unit); plan['resources']['required_uid'] = uid
+        original = {} if host=='workstation' else dict(SLURM_JOB_ID='771',SLURM_NNODES='1',SLURM_NTASKS='1',SLURM_CPUS_PER_TASK='1')
         env = contract.sanitized_environment(plan,environ=original)
         return plan, env, proc, controller, leaf
 
@@ -47,10 +47,10 @@ class PairedContractTests(unittest.TestCase):
             return contract.observe(plan,proc_root=proc,cgroup_root=controller,pid=123,
                 runtime_python=plan['runtime_python'],runtime_prefix=plan['runtime_prefix'])
 
-    def test_pax_needs_exact_owned_service_and_effective_caps_without_slurm(self):
+    def test_workstation_needs_exact_owned_service_and_effective_caps_without_slurm(self):
         with tempfile.TemporaryDirectory() as tmp:
             values = self.fixture(Path(tmp)); result = self.observed(values)
-            self.assertEqual(result['execution_host'],'pax'); self.assertFalse(result['slurm']['verified'])
+            self.assertEqual(result['execution_host'],'workstation'); self.assertFalse(result['slurm']['verified'])
             self.assertEqual(result['scheduler']['kind'],'systemd-user'); self.assertTrue(result['scheduler']['verified'])
             self.assertTrue(result['fit_containment_verified']); self.assertIs(contract.require_fit_ready(result),result)
             self.assertEqual(result['memory']['limit_bytes'],8*GIB)
@@ -58,7 +58,7 @@ class PairedContractTests(unittest.TestCase):
             self.assertEqual(result['cpu']['effective_quota_cpus'],1.)
             self.assertEqual(result['scientific_fits'],0); self.assertFalse(result['execution_authorized'])
 
-    def test_mismatched_pax_unit_or_owner_cannot_fall_back_to_valid_slurm(self):
+    def test_mismatched_workstation_unit_or_owner_cannot_fall_back_to_valid_slurm(self):
         for change in ('unit','membership','owner'):
             with self.subTest(change=change),tempfile.TemporaryDirectory() as tmp:
                 values = self.fixture(Path(tmp)); plan, env, proc, _, _ = values
@@ -69,7 +69,7 @@ class PairedContractTests(unittest.TestCase):
                 result = self.observed(values)
                 self.assertEqual(result['status'],'blocked'); self.assertTrue(result['slurm']['verified'])
                 self.assertFalse(result['scheduler']['verified'])
-                self.assertIn('Matching owned Pax systemd service is unverified',result['blocking_reasons'])
+                self.assertIn('Matching owned Workstation systemd service is unverified',result['blocking_reasons'])
                 with self.assertRaises(ValueError):contract.require_fit_ready(result)
 
     def test_kernel_peak_and_io_are_from_owned_leaf_and_remain_optional(self):
@@ -86,13 +86,13 @@ class PairedContractTests(unittest.TestCase):
             self.assertEqual(result['memory']['peak_bytes'],123456)
             self.assertEqual(result['kernel_counters']['io.stat'],'8:0 rbytes=1024 wbytes=2048')
 
-    def test_pax_service_name_must_be_explicit_and_safe(self):
+    def test_workstation_service_name_must_be_explicit_and_safe(self):
         for name in ('','../wrong.service','other.scope','x.service\nother.service'):
             with self.subTest(name=name),tempfile.TemporaryDirectory() as tmp:
                 values = self.fixture(Path(tmp)); values[0]['unit_name'] = name
                 with self.assertRaisesRegex(ValueError,'Exact local service'):self.observed(values)
 
-    def test_pax_missing_or_expanded_cpu_ram_swap_pid_evidence_blocks_fits(self):
+    def test_workstation_missing_or_expanded_cpu_ram_swap_pid_evidence_blocks_fits(self):
         for name, value in [('cpu.max','max 100000'),('memory.max','max'),
             ('memory.max',str(9*GIB)),('memory.swap.max','1'),('memory.swap.current','1'),
             ('pids.max','max'),('pids.max','65'),('pids.current','65')]:
@@ -101,7 +101,7 @@ class PairedContractTests(unittest.TestCase):
                 result = self.observed(values); self.assertFalse(result['fit_containment_verified'])
                 with self.assertRaises(ValueError):contract.require_fit_ready(result)
 
-    def test_pax_fit_packet_rechecks_caps_service_scope_and_isolated_startup(self):
+    def test_workstation_fit_packet_rechecks_caps_service_scope_and_isolated_startup(self):
         with tempfile.TemporaryDirectory() as tmp:
             values = self.fixture(Path(tmp)); result = self.observed(values)
             for section, key, value in [('memory','limit_bytes',9*GIB),('pids','limit',65),
@@ -112,18 +112,18 @@ class PairedContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):contract.require_fit_ready(changed)
             self.assertFalse(self.observed(values,isolated=False)['fit_containment_verified'])
 
-    def test_mimas_still_requires_single_node_task_slurm_even_with_valid_kernel_caps(self):
+    def test_hpc_still_requires_single_node_task_slurm_even_with_valid_kernel_caps(self):
         for key, value in [('SLURM_JOB_ID',''),('SLURM_NNODES','2'),('SLURM_NTASKS','2'),('SLURM_CPUS_PER_TASK','2')]:
             with self.subTest(key=key),tempfile.TemporaryDirectory() as tmp:
-                values = self.fixture(Path(tmp),host='mimas'); values[1][key] = value
+                values = self.fixture(Path(tmp),host='hpc'); values[1][key] = value
                 result = self.observed(values)
-                self.assertEqual(result['execution_host'],'mimas'); self.assertIsNone(result['scheduler'])
+                self.assertEqual(result['execution_host'],'hpc'); self.assertIsNone(result['scheduler'])
                 self.assertEqual(result['status'],'blocked'); self.assertFalse(result['slurm']['verified'])
                 with self.assertRaises(ValueError):contract.require_fit_ready(result)
 
-    def test_mimas_unchanged_caps_and_actual_environment_gate(self):
+    def test_hpc_unchanged_caps_and_actual_environment_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
-            values = self.fixture(Path(tmp),host='mimas'); result = self.observed(values)
+            values = self.fixture(Path(tmp),host='hpc'); result = self.observed(values)
             self.assertTrue(result['fit_containment_verified']); contract.require_fit_ready(result)
             for name in ('memory.max','memory.swap.max','pids.max'):
                 path = values[-1]/name; saved = path.read_text(); path.unlink()
@@ -136,7 +136,7 @@ class PairedRoutingTests(unittest.TestCase):
     def plan(self):
         return dict(phase='pilot64',run_root='/run/new',runtime_prefix='/runtime/new',
             runtime_python='/runtime/new/bin/python',wheelhouse='/payload/wheels',
-            requirements='/payload/requirements.txt',runner='/source/mimas_cpu.py',partition='debug',
+            requirements='/payload/requirements.txt',runner='/source/hpc_cpu.py',partition='debug',
             resources=dict(maximum_cpus=1,maximum_memory_bytes=8*GIB,maximum_wall_seconds=3600,
                 maximum_pids=64,maximum_swap_bytes=0))
 
@@ -147,9 +147,9 @@ class PairedRoutingTests(unittest.TestCase):
                 plan['phase'] = phase
                 body = package.smoke_batch('/payload/plan.json',plan,'/base/bin/python',environment_exists=True)
                 self.assertEqual(shlex.split(body.splitlines()[-1]),
-                    ['exec','/runtime/new/bin/python','-I','/source/mimas_cpu.py',action,'/payload/plan.json'])
+                    ['exec','/runtime/new/bin/python','-I','/source/hpc_cpu.py',action,'/payload/plan.json'])
                 self.assertIn('#SBATCH --no-requeue',body); self.assertNotIn('pip install',body)
-                self.assertLess(body.index('mimas_cpu.py verify'),body.index('exec '))
+                self.assertLess(body.index('hpc_cpu.py verify'),body.index('exec '))
         plan['phase'] = 'full-clustering'
         with self.assertRaises(ValueError):package.smoke_batch('/payload/plan.json',plan,'/base/bin/python')
 
@@ -157,10 +157,10 @@ class PairedRoutingTests(unittest.TestCase):
         plan = self.plan(); plan['containment'] = dict(mode='user_scope')
         body = package.smoke_batch('/payload/plan.json',plan,'/base/bin/python')
         self.assertEqual(shlex.split(body.splitlines()[-1]),
-            ['exec','/base/bin/python','-I','/source/mimas_scope.py','launch','/payload/plan.json'])
+            ['exec','/base/bin/python','-I','/source/hpc_scope.py','launch','/payload/plan.json'])
         self.assertNotIn('-m venv',body); self.assertNotIn('pip install',body)
         inner = dict(plan); inner.pop('containment')
-        self.assertIn('mimas_cpu.py run /payload/plan.json',package.smoke_batch('/payload/plan.json',inner,'/base/bin/python'))
+        self.assertIn('hpc_cpu.py run /payload/plan.json',package.smoke_batch('/payload/plan.json',inner,'/base/bin/python'))
 
     def test_scope_supports_pilot64_with_same_explicit_caps_and_zero_swap(self):
         plan = self.plan(); plan['bootstrap'] = dict(python='/base/bin/python')

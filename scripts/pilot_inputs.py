@@ -134,7 +134,7 @@ def prepare(spec,output):
         metadata=expected[name];members.append(dict(model=name,local_path=str(destination),original_sha256=row['sha256'],
             flags=dict(method=row['method'],native_physicality=metadata['native_physicality'],energy_t010=metadata['energy_t010'],energy_is_confidence=False)))
         scores.append(metadata)
-    save(output/'members-pax.json',dict(members=members));save(output/'snapshot-metadata.json',dict(models=scores))
+    save(output/'members-workstation.json',dict(members=members));save(output/'snapshot-metadata.json',dict(models=scores))
     need(identity(cache)==before,'Source cache changed during preparation')
     files=[record(p)for p in sorted(output.rglob('*'))if p.is_file()]
     result=dict(status='prepared_no_science',target=spec['target'],source_models=len(ids),model_count=len(indices),

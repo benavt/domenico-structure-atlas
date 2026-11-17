@@ -37,6 +37,10 @@ jobs:
         env:
           REVIEWED_SHA: ${{ inputs.bundle_sha256 }}
         run: python scripts/deploy_bundle.py local/site.tar.gz --sha256 "$REVIEWED_SHA" --output site/build
+      - name: Privacy check of the unpacked site before upload
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y poppler-utils
+          python scripts/check_privacy.py --dir site/build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/build

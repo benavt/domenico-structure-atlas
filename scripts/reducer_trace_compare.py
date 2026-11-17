@@ -10,9 +10,9 @@ import zipfile
 def modules():
     source=str(Path(__file__).absolute().parent)
     if source not in sys.path:sys.path.insert(0,source)
-    import mimas_pilot
+    import hpc_pilot
     import pilot_compare
-    return mimas_pilot,pilot_compare
+    return hpc_pilot,pilot_compare
 
 
 def read(entry,locations=None):
@@ -49,7 +49,7 @@ def compare(request,output):
     source=read(master['analysis_source'])
     if source!=Path(__file__).absolute():raise ValueError('Running comparator differs from frozen source')
     if master['maximum_projection_fits']!=24 or master['maximum_hdbscan_extractions']!=0:raise ValueError('Wrong scientific scope')
-    expected_keys={'pax-native','mimas-native','pax-generic','mimas-generic'}
+    expected_keys={'workstation-native','hpc-native','workstation-generic','hpc-generic'}
     if set(master['host_plans'])!=expected_keys or set(request['runs'])!=expected_keys:raise ValueError('All four closed runs required')
     stages={};accounting={};identity=None
     for key,plan_entry in master['host_plans'].items():
@@ -104,7 +104,7 @@ def compare(request,output):
         for method in ('umap','tsne'):pair('same-host-repeat',key,method+'1',key,method+'2')
     for profile in ('native','generic'):
         for method in ('umap','tsne'):
-            for repeat in ('1','2'):pair('cross-host-'+profile,'pax-'+profile,method+repeat,'mimas-'+profile,method+repeat)
+            for repeat in ('1','2'):pair('cross-host-'+profile,'workstation-'+profile,method+repeat,'hpc-'+profile,method+repeat)
     output=Path(output)
     if output.exists()or not output.is_absolute()or any(p.is_symlink()for p in [output,*output.parents]):raise ValueError('Fresh comparison destination required')
     output.mkdir(parents=True)

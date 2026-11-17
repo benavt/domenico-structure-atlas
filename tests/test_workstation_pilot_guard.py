@@ -10,10 +10,10 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import pax_pilot_guard as subject
+import workstation_pilot_guard as subject
 
 
-class PaxGuardTests(unittest.TestCase):
+class WorkstationGuardTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -24,7 +24,7 @@ class PaxGuardTests(unittest.TestCase):
         workload = dict(path=str(self.root / 'workload.sbatch'), bytes=1, sha256='w')
         guard = dict(path=str(self.root / 'guard-source/structure_clustering/resource_guard.py'),
                      bytes=1, sha256=subject.GUARD_SHA256)
-        self.plan = dict(execution_host='pax', phase='pilot64', run_root=str(self.root / 'run'),
+        self.plan = dict(execution_host='workstation', phase='pilot64', run_root=str(self.root / 'run'),
             runtime_prefix=str(self.root / 'new-env'), guard_output=str(self.root / 'guard-output'),
             bootstrap=dict(python=sys.executable, prefix=sys.prefix, binary=dict(path=sys.executable)),
             sources=dict(guard=dict(checkout=str(self.root / 'guard-source'), commit=subject.GUARD_COMMIT)),
@@ -32,7 +32,7 @@ class PaxGuardTests(unittest.TestCase):
             resources=dict(maximum_wall_seconds=60),
             guard=dict(admission=dict(minimum_available_memory_bytes=4096),
                        runtime=dict(minimum_available_memory_bytes=2048), interval_seconds=5, consecutive_failures=3))
-        self.observation = dict(execution_host='pax', smoke_containment_verified=True,
+        self.observation = dict(execution_host='workstation', smoke_containment_verified=True,
             **{key:dict(verified=True) for key in ('scheduler', 'runtime', 'cpu', 'memory', 'swap', 'pids')})
         self.cpu = SimpleNamespace(verify=Mock(return_value=self.plan),
             bound=Mock(side_effect=lambda entry:Path(entry['path'])), check_disk=Mock(),
@@ -78,7 +78,7 @@ class PaxGuardTests(unittest.TestCase):
         self.assertFalse(Path(self.plan['guard_output']).exists())
 
     def test_wrong_host_bootstrap_and_full_cohort_phase_are_rejected(self):
-        for key, value in [('execution_host', 'mimas'), ('phase', 'umap-full'),
+        for key, value in [('execution_host', 'hpc'), ('phase', 'umap-full'),
                            ('bootstrap', dict(self.plan['bootstrap'], python='/wrong/python'))]:
             original = self.plan[key]
             self.plan[key] = value

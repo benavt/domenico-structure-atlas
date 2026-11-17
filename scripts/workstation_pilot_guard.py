@@ -1,4 +1,4 @@
-"""Guard the approved Pax pilot/setup body before any environment creation.
+"""Guard the approved Workstation pilot/setup body before any environment creation.
 
 The surrounding systemd user unit owns CPU/RAM/swap/PID limits. This small
 wrapper verifies them, then uses the separately hash-bound b561 pressure guard.
@@ -61,9 +61,9 @@ def _modules():
     source = str(Path(__file__).absolute().parent)
     if source not in sys.path:
         sys.path.insert(0, source)
-    import mimas_cpu
-    import mimas_contract
-    return mimas_cpu, mimas_contract
+    import hpc_cpu
+    import hpc_contract
+    return hpc_cpu, hpc_contract
 
 
 def _path(value):
@@ -88,7 +88,7 @@ def _guard_binding(plan, cpu):
 def _load_guard(path):
     # Dataclasses need the private module present during execution. Do not bind
     # or replace the scientific library namespace or reuse an arbitrary module.
-    name = '_paired_pax_pressure_guard_' + GUARD_SHA256
+    name = '_paired_workstation_pressure_guard_' + GUARD_SHA256
     need(name not in sys.modules, 'Private guard namespace already exists')
     specification = importlib.util.spec_from_file_location(name, path)
     need(specification is not None and specification.loader is not None,
@@ -121,19 +121,19 @@ def _child_environment(plan, contract):
 def run(plan_path):
     cpu, contract = _modules()
     plan = cpu.verify(plan_path)
-    need(plan.get('execution_host') == 'pax' and plan.get('phase') in ('smoke', 'pilot64', 'repro64', 'isolate64', 'curve64','curve1000'),
-         'Only the approved Pax setup or paired reducer pilot is supported')
-    need(not plan.get('containment'), 'Pax containment belongs to its systemd unit, not a Slurm scope')
+    need(plan.get('execution_host') == 'workstation' and plan.get('phase') in ('smoke', 'pilot64', 'repro64', 'isolate64', 'curve64','curve1000'),
+         'Only the approved Workstation setup or paired reducer pilot is supported')
+    need(not plan.get('containment'), 'Workstation containment belongs to its systemd unit, not a Slurm scope')
     bootstrap = plan['bootstrap']
     cpu.bound(bootstrap['binary'])
     need(sys.executable == bootstrap['python'] and sys.prefix == bootstrap['prefix'],
          'Exact approved bootstrap interpreter/prefix required')
     own = _path(Path(__file__).absolute())
     frozen = {entry['path']:entry for entry in plan['frozen_files']}
-    need(str(own) in frozen, 'Pax launcher source is not frozen')
+    need(str(own) in frozen, 'Workstation launcher source is not frozen')
     cpu.bound(frozen[str(own)])
     workload = cpu.bound(plan['scoped_workload'])
-    need(plan['scoped_workload'] in plan['frozen_files'], 'Pax bash workload is not frozen')
+    need(plan['scoped_workload'] in plan['frozen_files'], 'Workstation bash workload is not frozen')
     root = _path(plan['run_root'])
     runtime = _path(plan['runtime_prefix'])
     output = _path(plan['guard_output'])
@@ -154,11 +154,11 @@ def run(plan_path):
     observation = contract.observe(bootstrap_plan)
     # Environment paths need not exist yet. Verify the actual job and every
     # kernel resource before importing guard code or executing setup/bash.
-    need(observation.get('execution_host') == 'pax'
+    need(observation.get('execution_host') == 'workstation'
          and observation.get('smoke_containment_verified') is True
          and all(observation.get(key, {}).get('verified') is True
                  for key in ('scheduler', 'runtime', 'cpu', 'memory', 'swap', 'pids')),
-         'Actual Pax bootstrap/kernel containment is unverified; no setup')
+         'Actual Workstation bootstrap/kernel containment is unverified; no setup')
     guard_path = _guard_binding(plan, cpu)
     guard = _load_guard(guard_path)
     admission = guard.ResourceLimits(**policy['admission'])
@@ -176,7 +176,7 @@ def run(plan_path):
             maximum_wall_seconds=workload_wall,
             consecutive_failures=policy['consecutive_failures'])
     need(type(code) is int, 'Pressure guard did not return an actual child exit code')
-    cpu.save(output / 'launcher.json', dict(schema_version=1, execution_host='pax',
+    cpu.save(output / 'launcher.json', dict(schema_version=1, execution_host='workstation',
         plan_sha256=cpu.sha(plan_path), runtime_guard=plan['runtime_guard'],
         bootstrap_observation=observation, workload=plan['scoped_workload'],
         returncode=code, wrapper_scientific_fits=0))

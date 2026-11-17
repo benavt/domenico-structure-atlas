@@ -55,7 +55,7 @@ submits fits or changes production stages. Further strict-math/label/scaling tes
 remain separate scopes.
 
 Before requesting execution approval, run the exact isolated CLI against each
-staged host plan: `python -I -B scripts/mimas_cpu.py preflight PLAN`. This reads
+staged host plan: `python -I -B scripts/hpc_cpu.py preflight PLAN`. This reads
 frozen source/input/provenance bindings without requiring or granting approval,
 submitting work, importing estimators or creating a run. It is distinct from
 `verify`, `run`, `child`, `setup-check` and `smoke`, which retain exact approval

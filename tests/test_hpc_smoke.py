@@ -12,7 +12,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
-import mimas_smoke as subject
+import hpc_smoke as subject
 
 
 def record(path):

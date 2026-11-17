@@ -57,9 +57,9 @@ def verify(plan_path, *, require_approval=True):
     if require_approval:
         approval = json.loads((path.parent / 'approval.json').read_text())
         if approval.get('approved') is not True or approval.get('plan_sha256') != sha(path):
-            raise ValueError('Exact approved Mimas CPU validation plan required')
-    if (plan.get('operation') != 'mimas-cpu-validation' or plan.get('phase') not in STAGES):
-        raise ValueError('Exact approved Mimas CPU validation plan required')
+            raise ValueError('Exact approved HPC CPU validation plan required')
+    if (plan.get('operation') != 'hpc-cpu-validation' or plan.get('phase') not in STAGES):
+        raise ValueError('Exact approved HPC CPU validation plan required')
     phase = plan['phase']
     if (plan.get('stages') != list(STAGES[phase])
             or plan.get('maximum_projection_fits') != FIT_LIMITS[phase][0]
@@ -83,7 +83,7 @@ def verify(plan_path, *, require_approval=True):
             bound(entry)
             if entry not in plan['frozen_files']:
                 raise ValueError('Diagnostic source is not frozen')
-    for name in ('mimas_contract.py', 'mimas_smoke.py', 'mimas_pilot.py'):
+    for name in ('hpc_contract.py', 'hpc_smoke.py', 'hpc_pilot.py'):
         if str(source / name) not in entries:
             raise ValueError('Controller dependency is not frozen: ' + name)
     if phase in ('isolate64', 'curve64','curve1000'):
@@ -96,7 +96,7 @@ def verify(plan_path, *, require_approval=True):
     if plan.get('containment'):
         scope = plan['containment']
         if (scope.get('mode') != 'user_scope'
-                or str(source / 'mimas_scope.py') not in entries
+                or str(source / 'hpc_scope.py') not in entries
                 or type(scope.get('scope_max_seconds')) is not int
                 or not 1 <= scope['scope_max_seconds'] <= plan['resources']['maximum_wall_seconds']
                 or type(scope.get('scope_memory_bytes')) is not int
@@ -138,8 +138,8 @@ def _modules():
     source = str(Path(__file__).absolute().parent)
     if source not in sys.path:
         sys.path.insert(0, source)
-    import mimas_contract
-    return mimas_contract
+    import hpc_contract
+    return hpc_contract
 
 
 def check_disk(plan, *, include_sizes=False):
@@ -246,8 +246,8 @@ def child(plan_path, stage, context_path, context_sha):
         import reducer_diagnostic
         reducer_diagnostic.pre_import(plan)
     if stage == 'smoke':
-        import mimas_smoke
-        result = mimas_smoke.run_smoke(plan, output)
+        import hpc_smoke
+        result = hpc_smoke.run_smoke(plan, output)
         if result.get('smoke_checks_passed') is not True:
             raise ValueError('CPU smoke is blocked; inspect its retained receipt')
     else:
@@ -257,16 +257,16 @@ def child(plan_path, stage, context_path, context_sha):
         plan = dict(plan, phase_outputs=value['phase_outputs'])
         # Reverify the installed wheel/runtime in the actual child rather than
         # trusting a historical smoke receipt or a source checkout on PYTHONPATH.
-        import mimas_smoke
+        import hpc_smoke
         smoke_output = root / 'stage-smoke' / stage
-        result = mimas_smoke.run_smoke(plan, smoke_output)
+        result = hpc_smoke.run_smoke(plan, smoke_output)
         if result.get('fit_ready') is not True:
             raise ValueError('Installed runtime smoke is not fit-ready')
         if plan['phase'] in ('repro64', 'isolate64', 'curve64','curve1000'):
             reducer_diagnostic.run_stage(plan, stage, output)
         else:
-            import mimas_pilot
-            mimas_pilot.run_stage(plan, stage, output)
+            import hpc_pilot
+            hpc_pilot.run_stage(plan, stage, output)
 
 
 def run(plan_path, *, popen=subprocess.Popen, clock=time.monotonic, sleep=time.sleep):

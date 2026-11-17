@@ -7,7 +7,7 @@ import sys
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import reducer_isolation_compare as subject
-import mimas_pilot as pilot
+import hpc_pilot as pilot
 import test_reducer_trace_compare as fixtures
 
 
@@ -18,7 +18,7 @@ class IsolationComparisonTests(unittest.TestCase):
         request=f.fixture();old=json.loads(Path(request['path']).read_text());master=json.loads(Path(old['master']['path']).read_text())
         plans={};runs={};references={};self.traces=[]
         shared=f.root/'init.npy';f.np.save(shared,f.np.arange(128,dtype=f.np.float32));init=pilot.record(shared)
-        for host in ['pax','mimas']:
+        for host in ['workstation','hpc']:
             key=host+'-native';proof=old['runs'][key]
             native=json.loads(Path(master['host_plans'][key]['path']).read_text());native['execution_host']=host
             native_entry=f.put(native)

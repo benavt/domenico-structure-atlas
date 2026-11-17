@@ -65,7 +65,7 @@ def _relative(name):
 
 def _production_adapters():
     # Consumer scripts are intentionally retained source, not an installed package.
-    from mimas_contract import observe
+    from hpc_contract import observe
     def provider(source):
         from rbp_density import load_native
         return load_native(source)
@@ -219,8 +219,8 @@ def run_smoke(plan, output, check=lambda: None, *, adapters=None):
         for arguments in probes:
             flags = ['-I']
             if plan.get('phase') in ('repro64', 'isolate64', 'curve64','curve1000'):
-                import mimas_contract
-                flags = mimas_contract.python_flags(plan)
+                import hpc_contract
+                flags = hpc_contract.python_flags(plan)
             command = [plan['runtime_python'], *flags, '-m', 'structure_clustering', *arguments]
             def run(command=command, arguments=arguments):
                 result = adapters['run'](command, cwd=str(cwd), env=environment, capture_output=True, text=True, timeout=timeout, check=False)

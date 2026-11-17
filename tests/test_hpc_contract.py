@@ -11,7 +11,7 @@ from unittest.mock import patch
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-import mimas_contract as contract
+import hpc_contract as contract
 
 GIB = 1024**3
 
@@ -199,9 +199,9 @@ class ContractTests(unittest.TestCase):
     def test_environment_drops_hooks_and_overrides_every_native_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
             args=self.fixture(Path(tmp));plan=args[0]
-            original=dict(args[1],HOME='/real/home',PATH='/folding/bin',PYTHONPATH='/pax/source',
+            original=dict(args[1],HOME='/real/home',PATH='/folding/bin',PYTHONPATH='/workstation/source',
                 PYTHONHOME='/wrong',PYTHONSTARTUP='/hook.py',LD_PRELOAD='/hook.so',
-                ALPHAFOLD_NATIVE_HOOK='unsafe',DATA_PROCESSED='/pax/old',OPENBLAS_NUM_THREADS='96')
+                ALPHAFOLD_NATIVE_HOOK='unsafe',DATA_PROCESSED='/workstation/old',OPENBLAS_NUM_THREADS='96')
             result=contract.sanitized_environment(plan,environ=original)
             for key in ('PYTHONPATH','PYTHONHOME','PYTHONSTARTUP','LD_PRELOAD','ALPHAFOLD_NATIVE_HOOK'):
                 self.assertNotIn(key,result)
@@ -210,7 +210,7 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(result['PATH'],'/approved/runtime/bin:/usr/bin:/bin')
             for key in contract.THREAD_VARIABLES:self.assertEqual(result[key],'1')
             for key in contract.WRITER_PATHS:self.assertTrue(Path(result[key]).is_relative_to(Path(plan['run_root'])))
-            self.assertEqual(original['DATA_PROCESSED'],'/pax/old')
+            self.assertEqual(original['DATA_PROCESSED'],'/workstation/old')
             plan['run_root']=str(Path(tmp)/'../escape')
             with self.assertRaises(ValueError):contract.sanitized_environment(plan,environ=original)
 
@@ -273,17 +273,17 @@ class ContractTests(unittest.TestCase):
             binding=dict(schema=1,plan_sha256=digest,supervisor_pid=99,supervisor_start_time='1234',
                          slurm_cgroup=slurm,cpus=[12,60],unit=unit,scope_cgroup=scope,uid=uid,job_id='771')
             path=folder/'scope-binding.json';path.write_text(json.dumps(binding))
-            env.update(MIMAS_SCOPE_BINDING=str(path),MIMAS_SCOPE_BINDING_SHA256=hashlib.sha256(path.read_bytes()).hexdigest())
+            env.update(HPC_SCOPE_BINDING=str(path),HPC_SCOPE_BINDING_SHA256=hashlib.sha256(path.read_bytes()).hexdigest())
             cpu=dict(process_affinity=[12,60])
             def observed():return contract._scope_binding(plan,env,process,proc,cg,sysroot,cpu)
             self.assertTrue(observed()['verified'])
-            self.assertEqual(contract.sanitized_environment(plan,environ=env)['MIMAS_SCOPE_BINDING_SHA256'],env['MIMAS_SCOPE_BINDING_SHA256'])
+            self.assertEqual(contract.sanitized_environment(plan,environ=env)['HPC_SCOPE_BINDING_SHA256'],env['HPC_SCOPE_BINDING_SHA256'])
             for path,bad in [(private/'memory.max','max'),(private/'memory.oom.group','0'),
                              (original/'cpuset.cpus.effective','12,61'),(process/'status','PPid: 1\n'),
                              (parent/'cgroup','0::/foreign')]:
                 old=path.read_text();path.write_text(bad);self.assertFalse(observed()['verified']);path.write_text(old)
             cpu['process_affinity']=[12,61];self.assertFalse(observed()['verified'])
-            cpu['process_affinity']=[12,60];env['MIMAS_SCOPE_BINDING_SHA256']='0'*64;self.assertFalse(observed()['verified'])
+            cpu['process_affinity']=[12,60];env['HPC_SCOPE_BINDING_SHA256']='0'*64;self.assertFalse(observed()['verified'])
 
 
 if __name__=='__main__':

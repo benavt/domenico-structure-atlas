@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts'))
 import rbp_density as native
-import mimas_smoke as smoke
+import hpc_smoke as smoke
 
 
 CODE = b'''from .hierarchical_colors import TOKEN
@@ -86,11 +86,11 @@ class DensitySnapshotTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'archive (hash|size)|archive path/bytes/SHA'):
                     native.load_native(source)
 
-    def test_global_pax_commit_is_required_and_exact(self):
+    def test_global_workstation_commit_is_required_and_exact(self):
         for missing in (False, True):
             with self.subTest(missing=missing):
                 self.write_archive(comment='0'*40, global_comment=not missing)
-                with self.assertRaisesRegex(ValueError, 'global PAX commit'):
+                with self.assertRaisesRegex(ValueError, 'global extended tar header commit'):
                     native.load_native(self.source())
 
     def test_payload_must_equal_both_staged_pinned_sources(self):

@@ -10,7 +10,7 @@ def modules():
     sys.path.insert(0,str(Path(__file__).absolute().parent))
     import reducer_trace_compare as saved
     import pilot_compare as geometry
-    import mimas_cpu as cpu
+    import hpc_cpu as cpu
     return saved,geometry,cpu
 
 
@@ -42,11 +42,11 @@ def compare(request_path,output):
     if request.get('operation')!='closed-umap1000-comparison':raise ValueError('Closed curve comparison required')
     master=saved.data(request['master'])
     if (master.get('operation')!='paired-umap-curve1000' or master['maximum_projection_fits']!=2
-            or master['maximum_hdbscan_extractions']!=0 or set(master['host_plans'])!={'pax','mimas'}
-            or set(request['runs'])!={'pax','mimas'}
+            or master['maximum_hdbscan_extractions']!=0 or set(master['host_plans'])!={'workstation','hpc'}
+            or set(request['runs'])!={'workstation','hpc'}
             or saved.read(master['analysis_source'])!=Path(__file__).absolute()):raise ValueError('Wrong curve experiment')
     runs={};identity=None
-    for host in ('pax','mimas'):
+    for host in ('workstation','hpc'):
         entry=master['host_plans'][host];plan=saved.data(entry);spec=request['runs'][host]
         locations=saved.data(spec['locations']);done=saved.data(spec['completion'],locations)
         if (plan.get('phase')!='curve1000' or plan['execution_host']!=host or plan['diagnostic_profile']!='native'
@@ -89,7 +89,7 @@ def compare(request_path,output):
         optimizer=next(e['values']for e in events if e['name']=='umap1_optimizer_scalars')
         if any(optimizer[k]!=recipe[k]for k in ('a','b')):raise ValueError('Optimizer did not use the bound a/b')
         runs[host]=dict(events=events,coordinates=projection(receipt['projection'],locations),identity=current)
-    left,right=runs['pax'],runs['mimas']
+    left,right=runs['workstation'],runs['hpc']
     if [e['name']for e in left['events']]!=[e['name']for e in right['events']]:raise ValueError('Trace interfaces differ')
     differences=[a['name']for a,b in zip(left['events'],right['events'])if a!=b]
     import saved_curve_evidence
